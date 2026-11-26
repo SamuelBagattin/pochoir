@@ -84,6 +84,7 @@ un-accept an ADR. We supersede it.
 | [0002](0002-watermark-algorithm-and-quality-modes.md) | Watermark algorithm and output quality modes | Accepted |
 | [0003](0003-pdf-input-rasterisation.md) | PDF input rasterisation | Accepted |
 | [0005](0005-licensing.md) | Licensing | Accepted |
+| [0006](0006-image-page-size-cap.md) | Cap an image input's page at A4 | Accepted |
 
 `0004` is reserved for build reproducibility and deployed-bundle attestation
 and is not written yet. A number is never reused, so the gap stays.

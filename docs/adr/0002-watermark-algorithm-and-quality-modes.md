@@ -124,6 +124,13 @@ are separable, and we separate them.
 
 ### Page geometry: keep the original, never stretch
 
+> **Superseded for image inputs by [ADR-0006](0006-image-page-size-cap.md)
+> (2026-11-26, decided by Samuel Bagattin), in that respect only.** The page is
+> still the image's own aspect ratio sized at the chosen DPI, but it is then
+> capped at A4 — shrunk to fit, never enlarged. The reasoning below is left as
+> written, and the rule for **PDF inputs is unchanged**. The rest of this ADR
+> stands.
+
 **We will keep the input's page geometry.**
 
 - PDF input: the output `MediaBox` equals the input page's `MediaBox`, including
