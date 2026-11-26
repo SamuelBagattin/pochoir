@@ -52,15 +52,18 @@ set -eu
 #
 #     grep -c '^\[\[package\]\]' Cargo.lock
 #
-# 15 = the two workspace crates, plus the 11 third-party crates in the common
+# 16 = the three workspace crates, plus the 11 third-party crates in the common
 # path's runtime closure (see the allowlists), plus two entries the closure does
 # not contain: `miniz_oxide` is locked twice (0.8 for `png`, 0.9 for `flate2`),
 # and `zlib-rs` is locked as an optional `flate2` backend we do not enable. That
 # gap between the lock file and the closure is exactly why check 2 exists.
 #
-# ADR-0001 predicted 14 for this step. The real figure is 15. Trust this one: it
-# came from the command above.
-THRESHOLD=15
+# ADR-0001 predicted 14 for this step. The real figure was 15 with two crates,
+# and is 16 since `pochoir-wasm` was added. That crate moved the figure by
+# exactly one and took no third-party dependency of its own: its allowlist is
+# byte-identical to `pochoir-core`'s, which is the measurement that says so.
+# Trust the command above, never a figure copied from a document.
+THRESHOLD=16
 
 WASM_TARGET="wasm32-unknown-unknown"
 ALLOWLIST_DIR="scripts/allowlist"
@@ -70,8 +73,12 @@ ALLOWLIST_DIR="scripts/allowlist"
 # downloads and the one ADR-0003's module split is about. `pochoir-cli` is
 # measured for the host, because it is never built for wasm32 and a wasm32
 # measurement of it would be a fiction. A `host` entry means "no --target flag".
+# `pochoir-wasm` is measured for wasm32 for the same reason as the core: it *is*
+# the module the browser downloads, and its closure is the core's plus whatever
+# the bindings themselves pull in, which is meant to stay nothing.
 GUARDED="pochoir-core:$WASM_TARGET
-pochoir-cli:host"
+pochoir-cli:host
+pochoir-wasm:$WASM_TARGET"
 
 # --- Helpers -----------------------------------------------------------------
 
