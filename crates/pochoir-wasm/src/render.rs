@@ -9,38 +9,54 @@ use pochoir_core::{ImagePage, Pixmap, image, image_to_pdf, mark};
 
 use crate::options::{self, Request};
 use crate::scale;
-use crate::status::{self, Status};
+use crate::status::{Failure, Status};
 
-/// What a render produced: a status, and on success some bytes.
+/// What a render produced.
 ///
-/// `width` and `height` are the bitmap's dimensions for a preview and `0` for a
-/// PDF. That is the whole of how a caller tells the two apart, so a PDF must
-/// never carry a non-zero dimension.
+/// # Two invariants the ABI rests on
+///
+/// 1. **A document carries no dimensions.** `width` and `height` are the
+///    bitmap's dimensions for a preview and `0` for a PDF, and `width > 0` is
+///    the whole of how a caller tells the two apart. There is deliberately no
+///    `kind` field — the value is already carried — so this must be an
+///    invariant of the code rather than a property of the happy path. The three
+///    constructors below are the only way to build an `Outcome`, each fixes the
+///    dimensions for its own case, and `a_document_never_carries_dimensions`
+///    pins it across every input the tests reach.
+/// 2. **On failure, `bytes` is the detail payload**, not output: the structured
+///    data described on [`Failure`], or empty where there is nothing to name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Outcome {
     /// Zero on success.
     pub status: Status,
-    /// The PDF bytes or the RGBA8 pixels; empty on failure.
+    /// On success the PDF bytes or the RGBA8 pixels; on failure the detail
+    /// payload, which is often empty.
     pub bytes: Vec<u8>,
-    /// Bitmap width, or `0` for a PDF.
+    /// Bitmap width, or `0` for a PDF and `0` on failure.
     pub width: u32,
-    /// Bitmap height, or `0` for a PDF.
+    /// Bitmap height, or `0` for a PDF and `0` on failure.
     pub height: u32,
 }
 
 impl Outcome {
-    /// A failure carrying no bytes.
+    /// A failure, carrying its detail payload and no dimensions.
     #[must_use]
-    pub const fn failed(status: Status) -> Self {
+    pub fn failed(failure: Failure) -> Self {
         Self {
-            status,
-            bytes: Vec::new(),
+            status: failure.status,
+            bytes: failure.detail.into_bytes(),
             width: 0,
             height: 0,
         }
     }
 
-    /// A finished document: bytes, and both dimensions zero.
+    /// A failure with no payload. Shorthand for the common case.
+    #[must_use]
+    pub fn refused(status: Status) -> Self {
+        Self::failed(Failure::bare(status))
+    }
+
+    /// A finished document: bytes, and both dimensions zero by construction.
     #[must_use]
     pub const fn document(bytes: Vec<u8>) -> Self {
         Self {
@@ -68,11 +84,11 @@ impl Outcome {
 pub fn render_pdf(image_bytes: &[u8], text: &str, packed_options: &[u8]) -> Outcome {
     let request = match options::parse(packed_options, text) {
         Ok(request) => request,
-        Err(status) => return Outcome::failed(status),
+        Err(failure) => return Outcome::failed(failure),
     };
     match image_to_pdf(image_bytes, &request.options) {
         Ok(pdf) => Outcome::document(pdf),
-        Err(error) => Outcome::failed(status::status_for(&error)),
+        Err(error) => Outcome::failed(Failure::for_error(&error, text)),
     }
 }
 
@@ -106,11 +122,11 @@ pub fn render_preview(
 ) -> Outcome {
     let request = match options::parse(packed_options, text) {
         Ok(request) => request,
-        Err(status) => return Outcome::failed(status),
+        Err(failure) => return Outcome::failed(failure),
     };
     match preview(&request, image_bytes, max_px) {
         Ok(outcome) => outcome,
-        Err(error) => Outcome::failed(status::status_for(&error)),
+        Err(error) => Outcome::failed(Failure::for_error(&error, text)),
     }
 }
 
@@ -431,6 +447,121 @@ mod tests {
         assert_ne!(outcome.status, Status::Ok);
         assert!(outcome.bytes.is_empty());
         assert_eq!((outcome.width, outcome.height), (0, 0));
+    }
+
+    /// The ABI has no `kind` field: a caller discriminates on `width > 0`. That
+    /// makes "a PDF always has both dimensions zero" load-bearing rather than
+    /// incidental, so it is asserted over every shape of input the suite can
+    /// reach — successes, each failure class, and a range of page geometries —
+    /// instead of only the happy path.
+    #[test]
+    fn a_document_never_carries_dimensions() {
+        let inputs: [&[u8]; 6] = [
+            &jpeg(64, 64),
+            &jpeg(300, 80),
+            &jpeg(80, 300),
+            b"not an image",
+            &jpeg(64, 64)[..20],
+            b"",
+        ];
+        for image in inputs {
+            for text in [TEXT, "", "\u{4e2d}"] {
+                for mode in [0_u32, 1, 2, 3] {
+                    let outcome = render_pdf(image, text, &packed(mode, 0));
+                    assert_eq!(
+                        (outcome.width, outcome.height),
+                        (0, 0),
+                        "a PDF result must never carry dimensions, whatever happened"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The mirror of the invariant above: a successful preview always carries
+    /// both dimensions, so `width > 0` is never ambiguous.
+    #[test]
+    fn a_successful_preview_always_carries_both_dimensions() {
+        for (w, h) in [(400_u32, 300_u32), (300, 400), (64, 64), (1000, 20)] {
+            for max_px in [1024_u32, 200, 32] {
+                let outcome = render_preview(&jpeg(w, h), TEXT, &defaults(), max_px);
+                assert_eq!(outcome.status, Status::Ok, "{w}x{h} at {max_px}");
+                assert!(outcome.width > 0 && outcome.height > 0);
+                assert_eq!(
+                    outcome.bytes.len() as u64,
+                    u64::from(outcome.width) * u64::from(outcome.height) * 4,
+                    "RGBA8 with no row padding: len must be width * height * 4"
+                );
+            }
+        }
+    }
+
+    /// The two named refusals of ADR-0007 reach the caller as their own status,
+    /// with the undrawable characters as the payload.
+    #[test]
+    fn the_named_refusals_reach_the_caller_with_their_payload() {
+        let image = jpeg(200, 150);
+
+        let glyphs = render_pdf(&image, "Pour \u{4e2d} et \u{6587}", &defaults());
+        assert_eq!(glyphs.status, Status::UnsupportedCharacter);
+        assert_eq!(
+            String::from_utf8(glyphs.bytes).expect("the payload is UTF-8"),
+            "\u{4e2d}\u{6587}"
+        );
+
+        // 200 wide characters with no space in them cannot be broken, which is
+        // the one way ADR-0007's refusal path is reached. `"M".repeat(200)` is
+        // the engine's own case for it; `"a".repeat(200)` still fits, because
+        // the refusal depends on the advance width rather than the count.
+        let unbreakable = "M".repeat(200);
+        let refused = render_pdf(&image, &unbreakable, &defaults());
+        assert_eq!(refused.status, Status::TextDoesNotFit);
+        assert!(
+            refused.bytes.is_empty(),
+            "there is nothing to name beyond the status itself"
+        );
+    }
+
+    #[test]
+    fn a_bad_argument_names_its_field_on_both_paths() {
+        let image = jpeg(64, 64);
+        let bad_blur = {
+            let mut o = defaults();
+            o[28..32].copy_from_slice(&3.0_f32.to_le_bytes());
+            o
+        };
+        for outcome in [
+            render_pdf(&image, TEXT, &bad_blur),
+            render_preview(&image, TEXT, &bad_blur, 32),
+        ] {
+            assert_eq!(outcome.status, Status::BadArgument);
+            assert_eq!(
+                String::from_utf8(outcome.bytes).expect("UTF-8"),
+                "mark blur"
+            );
+        }
+    }
+
+    /// No payload this crate emits may exceed what the caller will read.
+    #[test]
+    fn no_payload_exceeds_the_readers_cap() {
+        let image = jpeg(64, 64);
+        // 200 distinct CJK characters: the largest payload reachable, since the
+        // mark text is capped at 200 characters.
+        let text: String = (0x4E00..0x4E00 + 200_u32)
+            .filter_map(char::from_u32)
+            .collect();
+        let outcome = render_pdf(&image, &text, &defaults());
+        assert_eq!(outcome.status, Status::UnsupportedCharacter);
+        assert!(
+            outcome.bytes.len() <= crate::status::MAX_DETAIL_BYTES,
+            "payload was {} bytes",
+            outcome.bytes.len()
+        );
+        assert!(
+            String::from_utf8(outcome.bytes).is_ok(),
+            "must stay valid UTF-8"
+        );
     }
 
     #[test]
