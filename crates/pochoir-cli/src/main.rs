@@ -150,8 +150,35 @@ fn main() -> ExitCode {
 fn run(invocation: &Invocation) -> Result<String, String> {
     let bytes = std::fs::read(&invocation.input)
         .map_err(|error| format!("cannot read {}: {error}", show(&invocation.input)))?;
-    let pdf = pochoir_core::image_to_pdf(&bytes, &invocation.options)
+    // The compositor knows things the pixels do not show — chiefly that the
+    // text would not fit at the size that was asked for. ADR-0007 Decision 2
+    // keeps drawing in that case rather than refusing, which makes saying so
+    // the whole of the user's protection against a mark quietly coming out
+    // much smaller than they chose.
+    let mut shrunk: Option<(f32, f32, f32)> = None;
+    let pdf =
+        pochoir_core::image_to_pdf_observed(&bytes, &invocation.options, |_, _, composition| {
+            if let Some(composition) = composition
+                && composition.was_shrunk_noticeably()
+                && shrunk.is_none()
+            {
+                shrunk = Some((
+                    composition.shrink_ratio(),
+                    composition.requested_font_size_px,
+                    composition.layout.font_size_px,
+                ));
+            }
+        })
         .map_err(|error| format!("{}: {error}", show(&invocation.input)))?;
+    if let Some((ratio, asked, drawn)) = shrunk {
+        eprintln!(
+            "pochoir: warning: the mark text did not fit at the size you asked \
+             for, so it was drawn at {:.0}% of it ({drawn:.0} px instead of \
+             {asked:.0}). Shorten the text, or raise --mark-size and let it \
+             wrap over more lines.",
+            ratio * 100.0
+        );
+    }
     std::fs::write(&invocation.output, &pdf)
         .map_err(|error| format!("cannot write {}: {error}", show(&invocation.output)))?;
     Ok(format!(

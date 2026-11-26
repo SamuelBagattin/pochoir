@@ -880,11 +880,31 @@ minified-but-unmapped output, which ADR-0001 had already ruled out.
       transparency log worth it?** Recommendation in Decision 3. It is here
       because the stronger options add a key to manage or a service to depend on,
       and that is a judgement about how much ceremony this project should carry.
-- [ ] **Needs decision from Samuel — do we hold a signing key at all?** A signed
-      manifest is only as good as the key custody, and for a single maintainer on
-      a laptop that is a real question rather than a formality. Declining to hold
-      one is a defensible answer, and it is the recommendation unless the answer
-      to the previous question is "yes, sign it".
+- [x] **No signing key. Decided by Samuel Bagattin on 2026-11-26.**
+
+      Hashes are published to a GitHub release, anchoring trust where this
+      project already anchors it, and nothing is signed.
+
+      Two reasons, and the second is the one that settles it. **A key we hold
+      is a key that can be compelled or stolen** — for a single maintainer on a
+      laptop, custody is the whole of the security, and there is no custody
+      story here better than "it is on the laptop". And **a signature would
+      imply a guarantee this ADR says plainly we cannot give**: it would read,
+      to anybody who did not read this document, as an attestation that a
+      trusted party vouches for the deployed bundle at a point in time, which
+      is exactly the claim ADR-0002 Decision 7 already refuses to make about
+      the watermark for the same reason. Adding ceremony that overstates what
+      we know is worse than publishing a hash that states it exactly.
+
+      This closes one question and not the others: the manifest's location, the
+      deploy token, the wording of the ceiling, the Linux measurement and the
+      COEP question are all still open, and **this ADR stays `Proposed`**.
+
+      *As raised:* do we hold a signing key at all? A signed manifest is only as
+      good as the key custody, and for a single maintainer on a laptop that is a
+      real question rather than a formality. Declining to hold one is a
+      defensible answer, and it is the recommendation unless the answer to the
+      previous question is "yes, sign it".
 - [ ] **Needs decision from Samuel — does the deploy token move to CI only?**
       Decision 4's post-deploy check is close to meaningless if a laptop can
       deploy. This forecloses a convenience a solo maintainer will miss, so it is

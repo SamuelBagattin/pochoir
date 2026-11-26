@@ -153,7 +153,7 @@ const GOLDENS: [(&str, &str); 6] = [
 /// The raster fingerprint of one page rendered with these options.
 fn raster_fingerprint(source: &dyn PageSource, options: &OutputOptions) -> String {
     let mut digest = None;
-    render_to_pdf_observed(source, options, |index, pixmap| {
+    render_to_pdf_observed(source, options, |index, pixmap, _| {
         assert_eq!(index, 0, "these goldens are single-page");
         digest = Some(to_hex(&fingerprint(pixmap.data())));
     })
@@ -347,7 +347,7 @@ fn every_page_of_a_multi_page_document_is_marked() {
     };
     let options = marked(3);
     let mut seen: Vec<(usize, usize, String)> = Vec::new();
-    let pdf = render_to_pdf_observed(&source, &options, |index, pixmap| {
+    let pdf = render_to_pdf_observed(&source, &options, |index, pixmap, _| {
         let shade = 0x90u8.saturating_add((index as u8).saturating_mul(17));
         seen.push((
             index,
@@ -383,8 +383,9 @@ fn an_unmarked_render_leaves_the_pixels_exactly_as_the_source_made_them() {
         dpi: 50.0,
         ..OutputOptions::default()
     };
-    render_to_pdf_observed(&source, &options, |_, pixmap| {
+    render_to_pdf_observed(&source, &options, |_, pixmap, composition| {
         assert_eq!(marked_pixels(pixmap, [0x90, 0x90, 0x90]), 0);
+        assert!(composition.is_none(), "no mark means no composition");
     })
     .expect("renders");
 }
@@ -521,7 +522,7 @@ fn the_eight_exif_orientations_still_come_out_upright_with_a_mark_on() {
         };
 
         let mut observed: Option<(u32, u32, [[u8; 3]; 4], usize)> = None;
-        render_to_pdf_observed(&image_page(&tagged), &options, |_, pixmap| {
+        render_to_pdf_observed(&image_page(&tagged), &options, |_, pixmap, _| {
             observed = Some((
                 pixmap.width(),
                 pixmap.height(),

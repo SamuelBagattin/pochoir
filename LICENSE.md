@@ -7,8 +7,9 @@ the repository you are looking at.
 | --- | --- | --- |
 | The Rust engine and CLI — `crates/pochoir-core`, `crates/pochoir-cli` | `MIT OR Apache-2.0`, at your option | [LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE) |
 | The web application and the site, when they exist — anything under a future `app/` or `web/` directory | `AGPL-3.0-or-later` | [LICENSE-AGPL](LICENSE-AGPL) |
+| The bundled font — `crates/pochoir-core/assets/roboto/` | `Apache-2.0`, and not ours | [assets/roboto/LICENSE](crates/pochoir-core/assets/roboto/LICENSE) |
 
-Copyright (c) 2026 Samuel Bagattin.
+Copyright (c) 2026 Samuel Bagattin, except for the bundled font below.
 
 ## Why the split
 
@@ -53,5 +54,15 @@ licence.
   operative notice; ADR-0005 is why.
 - Every third-party dependency adopted in ADR-0001 is `MIT OR Apache-2.0`-style
   and compatible with both halves.
+- **The bundled font is third-party material, not ours.**
+  `crates/pochoir-core/assets/roboto/Roboto-Regular-subset.ttf` is Roboto
+  Regular, subset to the Latin ranges the watermark draws, under the
+  **Apache License 2.0**. Its licence text is retained beside it at
+  [crates/pochoir-core/assets/roboto/LICENSE](crates/pochoir-core/assets/roboto/LICENSE),
+  which is what Apache-2.0 §4 requires of us when we redistribute it, and
+  [crates/pochoir-core/assets/roboto/README.md](crates/pochoir-core/assets/roboto/README.md)
+  records the upstream, its `sha256`, and the modification — subsetting, with
+  no outline altered and nothing renamed. Anyone redistributing Pochoir, in
+  source or binary form, carries that obligation on too.
 - `Cargo.toml` carries `license = "MIT OR Apache-2.0"` because it describes the
   crates only. It is not a statement about the application.

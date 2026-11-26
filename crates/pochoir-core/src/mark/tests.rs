@@ -6,9 +6,9 @@
 
 use super::{
     DEFAULT_ANGLE_DEGREES, DEFAULT_BLUR_RATIO, DEFAULT_COLOUR, DEFAULT_FONT_SIZE_RATIO,
-    DEFAULT_OPACITY, Frame, JITTER_FRACTION, Lattice, MAX_BLUR_RATIO, MAX_FONT_SIZE_RATIO,
-    MAX_MARK_CHARACTERS, MAX_OPACITY, MIN_FONT_SIZE_RATIO, MIN_OPACITY, Mark, TileDensity, compose,
-    derive_seed, layout, nfc, normalise, placements, unsupported_characters,
+    DEFAULT_OPACITY, FAINT_SHRINK_RATIO, Frame, JITTER_FRACTION, Lattice, MAX_BLUR_RATIO,
+    MAX_FONT_SIZE_RATIO, MAX_MARK_CHARACTERS, MAX_OPACITY, MIN_FONT_SIZE_RATIO, MIN_OPACITY, Mark,
+    TileDensity, compose, derive_seed, layout, nfc, normalise, placements, unsupported_characters,
 };
 use crate::Error;
 use crate::font::Font;
@@ -950,4 +950,102 @@ fn the_mark_reaches_every_corner_of_the_page() {
         }
         assert!(found, "the quadrant at ({x0},{y0}) has no mark on it");
     }
+}
+
+// --- ADR-0007 Decision 2, as corrected: the shrink is reported ---------------
+
+#[test]
+fn a_mark_drawn_at_the_requested_size_reports_no_shrink() {
+    let mut pixmap = page();
+    let composition = compose(&mut pixmap, &Mark::new(REALISTIC), 1, true).expect("composes");
+    assert!(!composition.layout.shrunk);
+    assert_eq!(composition.shrink_ratio(), 1.0);
+    assert!(!composition.was_shrunk_noticeably());
+    assert_eq!(
+        composition.requested_font_size_px,
+        DEFAULT_FONT_SIZE_RATIO * WIDTH as f32
+    );
+}
+
+#[test]
+fn a_mark_that_had_to_shrink_a_long_way_says_so() {
+    // The gap ADR-0007's first draft left: this input is drawn, not refused,
+    // and before the warning existed nothing told the user it had come out at
+    // a fraction of the size they chose.
+    let text = "Documentdestineexclusivementaunedemandedelocation".repeat(5)[..200].to_string();
+    assert_eq!(text.chars().count(), MAX_MARK_CHARACTERS);
+    let mut pixmap = page();
+    let composition = compose(&mut pixmap, &Mark::new(&text), 1, true)
+        .expect("an unbreakable 200-character string is usually drawn, not refused");
+    assert!(composition.layout.shrunk);
+    let ratio = composition.shrink_ratio();
+    assert!(
+        ratio < FAINT_SHRINK_RATIO,
+        "shrink ratio {ratio} should have tripped the warning"
+    );
+    assert!(composition.was_shrunk_noticeably());
+    assert!(ratio > 0.0 && ratio < 1.0);
+}
+
+#[test]
+fn the_shrink_ratio_is_the_two_sizes_divided() {
+    let text = "Documentdestineexclusivementaunedemandedelocation".repeat(5)[..200].to_string();
+    let mut pixmap = page();
+    let composition = compose(&mut pixmap, &Mark::new(&text), 1, true).expect("composes");
+    let expected = composition.layout.font_size_px / composition.requested_font_size_px;
+    assert!((composition.shrink_ratio() - expected).abs() < 1e-6);
+    assert!(composition.layout.font_size_px < composition.requested_font_size_px);
+}
+
+#[test]
+fn refusal_needs_text_that_is_unbreakable_and_wide_for_the_page() {
+    // ADR-0007 Decision 2 names the conditions; this is them, measured. The
+    // floor is keyed to the page's **shorter** edge while the width budget
+    // follows the rotated extent, so widening the page lowers the floor faster
+    // than it lowers the budget — and the same text that is refused on one
+    // page shape is drawn on another.
+    let wide = "M".repeat(200);
+    let narrow = "a".repeat(200);
+
+    // A4 portrait: the widest characters do not fit even at the floor.
+    let mut portrait = page();
+    assert_eq!(
+        compose(&mut portrait, &Mark::new(&wide), 1, true),
+        Err(Error::MarkDoesNotFit { characters: 200 })
+    );
+    // The same count of narrow characters does fit, by shrinking.
+    let mut portrait = page();
+    assert!(compose(&mut portrait, &Mark::new(&narrow), 1, true).is_ok());
+
+    // And on a wider page even the widest characters fit, because the floor
+    // fell with the shorter edge.
+    let mut landscape = small_page(2339, 1316);
+    assert!(
+        compose(&mut landscape, &Mark::new(&wide), 1, true).is_ok(),
+        "a wider page should lower the floor enough to fit"
+    );
+}
+
+#[test]
+fn a_refused_mark_is_the_rare_case_and_an_ordinary_long_one_is_not() {
+    // Guards the claim ADR-0007 Decision 2 now makes, so that a future change
+    // to the floor or the budget cannot quietly turn ordinary long text into
+    // an error.
+    let mut drawn = 0;
+    let mut refused = 0;
+    for text in [
+        "location ".repeat(22).trim().to_string(),
+        "Document destiné exclusivement à une demande de location — 26/11/2026".to_string(),
+        "a".repeat(200),
+        "Documentdestineexclusivementaunedemandedelocation".repeat(4),
+        "M".repeat(200),
+    ] {
+        let mut pixmap = page();
+        match compose(&mut pixmap, &Mark::new(&text), 1, true) {
+            Ok(_) => drawn += 1,
+            Err(Error::MarkDoesNotFit { .. }) => refused += 1,
+            Err(other) => panic!("{text:?}: unexpected {other}"),
+        }
+    }
+    assert_eq!((drawn, refused), (4, 1), "the balance of outcomes moved");
 }

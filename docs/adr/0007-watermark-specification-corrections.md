@@ -56,33 +56,61 @@ Recording this because the horizontal half of the tile-density parameter
 therefore does almost nothing for the common case, and somebody should find
 that written down rather than rediscover it as a bug.
 
-## Decision 2 — Long text wraps, then shrinks, then is refused. Never clipped
+## Decision 2 — Long text wraps, then shrinks, then is reported. Refusal is the rare case
 
 **ADR-0002 allows "up to 200 characters, up to 3 lines" at a font size that
 cannot hold 200 characters on one line, and does not say what gives.** It is:
 
 1. **Wrap** on word boundaries, to at most the three lines Decision 3 allows.
+   Words are never broken.
 2. **Shrink** the font if three lines still overflow, down to a floor of **1% of
    the page's shorter edge** — which is not an invented number but Decision 3's
    own stated minimum for the same parameter, so the floor is a size the
    specification already calls legible.
-3. **Refuse**, with an error naming the problem, if even the floor overflows.
+3. **Report** the shrink to the caller when the mark ends up below
+   `FAINT_SHRINK_RATIO` — 75% — of the size that was asked for. A warning,
+   never an error, mirroring the existing `colour_is_too_pale` warning: the
+   choice stays the user's and the mark is still drawn.
+4. **Refuse**, with an error naming the problem, only if even the floor
+   overflows.
 
 "Fits" means the text block's **rotated** bounding box fits the page, since a
 mark the page cannot hold once cannot be tiled either.
 
-**The load-bearing half of this decision is the word *never*.** Truncating
+**The load-bearing part of this decision is step 1's *never*.** Truncating
 `Document destiné exclusivement à une demande de location` to `Document destiné
 exclusiv` silently changes what the document asserts about itself. For a tool
 whose whole purpose is making a document's intended use legible on its face,
-that is a correctness bug and not a cosmetic one, so a mark that cannot be drawn
-honestly is not drawn at all. An error the user can read and act on is strictly
-better than a document that quietly says something else.
+that is a correctness bug and not a cosmetic one.
 
-Worth noting, because the arithmetic is not obvious: at the 1% floor, 200
-characters wrapped to three lines fits essentially any page. The refusal path is
-therefore reached only by text that cannot be *broken* — a 200-character string
-with no spaces in it — rather than by text that is merely long.
+### Where the refusal actually fires, measured
+
+**Step 3 exists because the first version of this ADR was wrong about step 4,
+and a document that is wrong is worse than one that is missing.** It claimed
+the refusal was reached by any text that could not be broken. It is not. An
+unbreakable 200-character string is usually *drawn*, by shrinking, and before
+the warning existed nothing told the user it had come out at a fraction of the
+size they chose. Measured on a 12-megapixel photograph, which is composited at
+its native pixel dimensions and not resampled:
+
+| Page | 200 × `M` | 200 × `a` | 200 characters, no spaces |
+| --- | --- | --- | --- |
+| 4:3, 4032 × 3024 | **refused** | drawn | drawn, at 41% of the size asked for |
+| 16:9, 4032 × 2268 | drawn | drawn | drawn |
+
+So refusal needs text that is **both unbreakable and wide relative to the
+page's shorter edge**, and whether a given string crosses that line depends on
+the page's shape as much as on the text. The reason is that the two bounds are
+keyed to different things: the font floor is a fraction of the **shorter edge**,
+while the width budget follows the **rotated extent**, which is nearer the
+diagonal. Widening a page lowers the floor faster than it lowers the budget, so
+the same text is refused on one page shape and drawn on another.
+
+`Error::MarkDoesNotFit` is therefore **kept and is reachable** — a test pins the
+4:3 `M` case so a change to either bound cannot silently make it unreachable —
+but it is a corner, not the ordinary path for long text. Silently succeeding
+beats refusing on input that is merely long; saying nothing at all was the
+thing that was actually wrong, and step 3 is the fix.
 
 ## Decision 3 — Blur is keyed to the font size, not to a pixel count
 
@@ -242,9 +270,14 @@ the exclusion zone, `overlay` mode, PDF input or a future shaping engine.
   work.
 - That a 1% font-size floor is legible on a real page. It is ADR-0002's own
   stated minimum, which is the authority being leaned on, not a measurement.
-- The claim that a 200-character mark always fits at the floor is arithmetic
-  over the bundled font's advance widths, checked by test for the cases in the
-  suite, not proved for every string.
+  The `FAINT_SHRINK_RATIO` warning threshold of 75% is likewise a judgement
+  about when a user deserves to be told, not a legibility measurement, and the
+  warning is worded as "smaller than you asked for" rather than as a claim
+  about whether the result can be read.
+- Decision 2's table is four measurements on two page shapes, not a
+  characterisation of every string. The boundary between drawn and refused is
+  a function of the text's advance widths and the page's aspect ratio, and
+  nothing here proves where it lies in general.
 
 ## References
 
