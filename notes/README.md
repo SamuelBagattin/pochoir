@@ -1,0 +1,3 @@
+# notes
+
+This directory holds the working record of the sessions that build this repository: hand-over notes when one session picks up where another left off, research write-ups that are too long or too provisional to belong in an ADR, and run logs from builds, benchmarks and output-quality comparisons against the tool we are trying to beat. Anything here is a snapshot of what someone believed at a point in time, not a specification — once a conclusion is settled and binding it should move into an ADR under `docs/adr/` and be referenced from here. `notes/local/` is git-ignored scratch space: use it for throwaway files, sample documents and anything that must never be committed.
