@@ -99,6 +99,164 @@ Quality notes: `#![forbid(unsafe_code)]` on both crates, `#![deny(missing_docs)]
 `Display` + `core::error::Error`. `check-deps.sh` is POSIX, `set -eu`, and its failure message
 names the ADR requirement.
 
+## The rotation, and what came with it
+
+The engine session had already started phase 2 before my rotation message reached it, and parked
+the work rather than binning it. I kept it: **`claude/watermark-mark` merged to `main` as
+`3ae2ee0`** — a Roboto Regular subset (21 052 bytes, 347 glyphs) with its licence and provenance,
+`scripts/subset-font.py`, and `make font-subset`. I verified the part that would have been
+expensive to get wrong: `googlefonts/roboto` (now `roboto-2`) is Apache-2.0 with a single LICENSE
+and no OFL, and upstream `src/hinted/Roboto-Regular.ttf` is 515 100 bytes with sha256
+`56a45233…664d`, matching the README exactly. The reasoning for Roboto over the better-covered OFL
+families is the valuable part: a subset is a derivative work, so OFL's Reserved Font Name clause
+would need reasoning about, while Apache-2.0 adds no licence family we do not already carry.
+It also wrote ~540 lines of TrueType parser and **deliberately kept it out of the repo** because it
+was never compiled — it sits in the notes folder labelled as notes. Right call.
+
+### My rulings on ADR-0002's seven collisions with reality
+
+The hand-over's section 8 found genuine defects in our own specification. Decided by me, to be
+recorded by the phase-2 session as **ADR-0007**, scoped to supersede ADR-0002 on items 2, 3, 4
+and 7 only:
+
+1. One column of text at a realistic mark length **is** the intent; the horizontal gap rarely
+   engages and the 6–10 repetitions are rows. Note it, change nothing.
+2. **Long text wraps, then shrinks, then refuses — never clips.** Clipping "Document destiné
+   exclusivement à une demande de location" into "Document destiné exclusiv" silently changes what
+   the document asserts. For this product that is a correctness bug, not a cosmetic one.
+3. **Blur keyed to font size**, not pixels: the spec's "at render resolution, scaled with DPI"
+   contradicts itself and rounds to a no-op at its own default. Plus a test that the default blur
+   demonstrably changes pixels. Still described as antialiasing, never as a defence.
+4. **Per-tile jitter, not one global offset.** The ADR's letter allows the weaker version; its own
+   justification ("a remover tuned to fixed tile positions fails") demands the stronger one.
+5. `--seed` / `--no-jitter` exist in the spec but not in `OutputOptions`; add them in the same
+   commit as the mark.
+6. Add the golden-hash hook.
+7. **NFC output must stay inside the font subset** — a test that the composition table's outputs
+   are all in the subset's `cmap`, and runtime validation that names unsupported characters rather
+   than drawing tofu.
+
+Build-order instruction carried from the hand-over, because it is right: **rasteriser and a PGM
+dump before any layout, and `é` rendering on day one** — it is a composite glyph, so composite
+parsing is on the critical path, and until it renders the NFC decision is untestable.
+
+### Also noted from the hand-over
+
+- `LICENSE.md` may want a line recording the bundled Apache-2.0 font. That is Apache-2.0 §4
+  attribution bookkeeping rather than a policy change, so it can be added — but ADR-0005 makes
+  licensing Samuel's, so tell him rather than deciding the framing.
+
+## ADR-0004 merged as Proposed (`17ba5d6`), 2026-11-26
+
+Not `Accepted` — six open questions, four of them Samuel's, and the README holds a document at
+`Proposed` until they are answered.
+
+**The headline reverses my own expectation and theirs:** no container is needed. Our wasm build is
+reproducible today for two `RUSTFLAGS` entries and no new tool — two checkouts at different
+absolute paths already produce byte-identical output, because Cargo hashes a workspace member's
+package id relative to the workspace root. I confirmed `trim-paths` is `-Z` only on 1.97.0, so my
+premise there needed the correction they gave it.
+
+**Three findings that bind code nobody has written yet.** Record them in `CLAUDE.md` when the
+bindings land, because none of them announces itself:
+
+1. **The wasm crate must be a workspace member.** Their first probe had `pochoir-core` as a path
+   dependency outside its workspace root, an absolute path entered `-Cmetadata`, the disambiguator
+   moved with the directory, every symbol was renamed and the module reordered — same size, 11 799
+   bytes different. This binds ADR-0003's binding crates and nothing in the output warns you.
+2. **Content-addressed asset filenames are a requirement, not a caching nicety.** Cloudflare can
+   serve HTML and assets from different versions mid-rollout, and SRI fails closed when they
+   disagree.
+3. **`make wasm` currently emits a 43-byte empty module.** `pochoir-core` exports nothing and
+   cannot carry `#[no_mangle]` while `lib.rs` has `#![forbid(unsafe_code)]` under edition 2024.
+   That tension has to be resolved when the bindings land — a separate binding crate, or
+   `#[unsafe(no_mangle)]` with a scoped allow. There is nothing to attest until then.
+
+**On the mechanism I could not reproduce myself:** they measured 28 host paths surviving
+`strip = true`. My own probe failed — the first had no dependencies and so no registry paths to
+leak, and my later attempts did not compile. I am accepting their number, because the mechanism is
+sound on its face (`core::panic::Location` strings are `file!()` in the data section, not
+debuginfo, which is exactly why `strip` cannot touch them) and their note documents a reproduction
+recipe. Flagged as *their* measurement, not mine.
+
+**The one open question that could flip Decision 1** is whether a Linux x86_64 host emits the same
+wasm as this Mac. Docker's daemon was down and neither of us started it unasked. It becomes nearly
+free the day the bindings produce a non-empty module, because CI already runs on `ubuntu-latest` —
+the measurement can be a CI job rather than a chore.
+
+**Prior art worth remembering:** Meta's Code Verify is alive but covers JS and CSS, **not
+WebAssembly**, and proves consistency rather than source-to-binary correspondence; "install it as a
+PWA and you are pinned" is marketing, since service workers soft-update on navigation — the only
+genuine pin is a downloaded build or the CLI, **which gives the CLI a second reason to exist**; and
+WAICT (Mozilla, Cloudflare, FPF, Meta; behind a pref in Firefox Nightly) has extending SRI to
+WebAssembly on its roadmap, i.e. the exact hole we are working around.
+
+**The ceiling, which the ADR states rather than hides:** for a web app served from infrastructure
+we control there is no mechanism that fully closes the gap, every root of trust we can offer
+arrives through the channel it is meant to police, verification is retrospective and voluntary, and
+a compelled maintainer holds every key. What a published hash changes is what can be done
+*quietly*. The session looked for a legal argument that published hashes constrain a compelled
+code-change order and found none — the defensible claim is purely technical.
+
+## Samuel's answers, 2026-11-26 (asked directly)
+
+1. **Next after phase 2: the web UI.** Astro + Svelte islands, wasm bindings, drag a photo in and
+   get a watermarked PDF out. Everything so far is invisible, and the UI forces ADR-0004's
+   constraints to be resolved while they are still cheap.
+2. **No code-signing key.** Publish hashes to a GitHub release and anchor trust where we already
+   anchor it. A key we hold is a key that can be compelled or stolen, and it would imply a
+   guarantee ADR-0004 says plainly we cannot give. **This closes ADR-0004's open question 2 — and
+   it must be written into ADR-0004, not left here.** Bundle it with the next docs change rather
+   than spawning a session for one checkbox. The ADR stays `Proposed`: the manifest location, the
+   deploy token, the ceiling wording, the Linux measurement and the COEP question are all still
+   open.
+3. **Deployment: register the domain when the website MVP is usable.** So `pochoir.app` is not
+   bought yet, deployment is a real goal rather than a maybe, and the trigger is mine to call —
+   **I must tell him the moment the MVP is genuinely usable**, because the domain is still
+   unreserved and someone else can take it. No deployment work is briefed until then, but
+   ADR-0004's constraints stay respected in code so nothing needs retrofitting.
+4. **French first**, with the strings structured for i18n from day one so English is an addition
+   rather than a rewrite. The beachhead is France, the search traffic is French, and the mark
+   presets (location, banque, mutuelle) are French administrative concepts.
+
+### Parallelism — I was wrong, and Samuel was right to push
+
+I said the three MVP pieces were sequential "because they all touch each other". On inspection
+that was a reflex, not an analysis. The UI writes **only `web/`** while phase 2 owns `crates/`, so
+they cannot collide at all, and the UI and the bindings collide at exactly one point — the ABI —
+which is mine to fix in advance rather than a reason to serialise. **Both are now running.**
+
+**The ABI contract I fixed** so the UI is not blocked (provisional; the bindings session may
+improve it and I will reconcile): synchronous, called from a Web Worker, no `wasm-bindgen`, plain
+exports over linear memory — `pochoir_alloc`/`pochoir_free`, `pochoir_render_pdf` and
+`pochoir_render_preview` returning a handle to `{status, ptr, len, width, height}` read through
+`pochoir_result_*` accessors. Mark text as a separate UTF-8 buffer; options as a **packed
+little-endian struct, not JSON**, because we are not putting a JSON parser in the core. The UI
+builds against a stub behind that same interface, so swapping in the real module touches one file.
+
+**Deploy plumbing still comes last**, and not from inertia: it configures the thing the UI session
+is building, writing into `web/` for content-addressed filenames, and a deploy pipeline verified
+against an empty directory is one you debug twice.
+
+### Design direction (Samuel, mid-turn)
+
+He does not want something that looks AI-generated. The UI session is to **use Claude in Chrome to
+study real sites first** — YC-shaped products (Linear, Resend, Cal.com, Railway, Supabase,
+PostHog), privacy-pitch products (Plausible, Proton, Tailscale), and Stripe/Vercel for type and
+spacing discipline — then **extract a real system into `web/DESIGN.md` before writing CSS**: type
+scale, spacing scale, colour ramp with AA contrast, radius and shadow policy. Method before vibe,
+because browsing-then-building is how pastiche happens.
+
+Named and banned: purple-blue gradients, giant centred hero type with a vague tagline,
+three-column icon grids, rounded cards floating on a grey wash, emoji in headings, glassmorphism.
+Target: a sober, precise utility someone would trust with a photograph of their passport — "we
+would rather be trusted than impressive", which is the whole project's tone.
+
+**And one constraint I added: do not borrow from the DSFR**, the French state design system that
+Filigrane Facile is built with, Marianne blue `#000091` and all. Looking like a government service
+would be dishonest and is a real legal risk when we compete with an actual state product. Study it
+once to know what to avoid.
+
 ## Reserved numbers
 
 - ADR-0001 stack and dependency policy — `adr-design`, merged, `Proposed`
@@ -116,7 +274,10 @@ names the ADR requirement.
   Put the **wasm artifacts** at the centre of it: that is what a reviewer is least able to eyeball
   and where a substituted build would be hardest to notice. A hash over the HTML and JS while the
   wasm goes unattested would be security theatre.
-- ADR-0005 and up: unassigned.
+- ADR-0005 licensing — merged, `Accepted`
+- ADR-0006 image page size cap — merged, `Accepted`
+- **ADR-0007 watermark specification corrections — reserved for the phase-2 session**
+- ADR-0008 and up: unassigned.
 
 ## Merge queue
 
@@ -216,8 +377,10 @@ names the ADR requirement.
 
 | session | id | owns |
 |---|---|---|
-| phase-2 (the mark) | `local_79c8214b-fbda-4eb6-adc4-d0f6590b8dbe` | `crates/`, `scripts/` |
-| adr-0004-attestation | `local_082f38c0-9661-4149-b091-797afa5b08a3` | `docs/adr/0004-*` and its one row in `docs/adr/README.md` |
+| ~~engine~~ | `local_79c8214b-fbda-4eb6-adc4-d0f6590b8dbe` | **rotated out at 500k**; wrote `phase2-handover.md` (347 lines) and stood down |
+| phase2-mark | `local_fb5b2705-27b3-4196-86e8-68a2a0ac87f5` — **running** | `crates/`, `scripts/`, `docs/adr/0007-*` |
+| web-ui | `local_afe7d3df-1afe-4f26-afa5-ae1dd17c616c` — **running** | `web/` only, plus `docs/adr/0008-*` if needed |
+| ~~adr-0004-attestation~~ | `local_082f38c0-9661-4149-b091-797afa5b08a3` | done, PR #6 merged as `17ba5d6` |
 
 Only shared file is the ADR index README, one row each — a trivial conflict I resolve at merge.
 ~~Phase 2 waits for the A4 PR~~ — PR #5 merged as `a5048ad`, phase 2 briefed to the same session.
