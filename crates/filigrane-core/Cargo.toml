@@ -1,0 +1,18 @@
+[package]
+name = "filigrane-core"
+version = "0.1.0"
+description = "Local-only document watermarking engine. Compiles to native and to wasm32."
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["lib", "cdylib"]
+
+# Intentionally empty: this crate has zero third-party dependencies and is
+# meant to stay that way. See CLAUDE.md and docs/adr/ before adding one.
+[dependencies]
+
+[dev-dependencies]

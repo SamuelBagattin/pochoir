@@ -1,0 +1,21 @@
+[workspace]
+resolver = "3"
+members = ["crates/filigrane-core", "crates/filigrane-cli"]
+
+# Shared metadata. Both crates inherit these with `field.workspace = true`.
+[workspace.package]
+edition = "2024"
+rust-version = "1.97"
+authors = ["Samuel Bagattin"]
+# TODO: licence choice is an open decision for Samuel. Pick a real SPDX
+# identifier (and add a LICENSE file) before anything is published.
+license = "UNLICENSED"
+repository = ""
+
+[profile.release]
+# The wasm artefact is shipped to browsers, so optimise it for size.
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
