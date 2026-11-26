@@ -1,5 +1,5 @@
 /// <reference lib="webworker" />
-import { EngineError, type PochoirModule } from './module';
+import { EngineError, EngineFault, type PochoirModule } from './module';
 import type { Failure, Request, Response } from './protocol';
 import { loadModule } from './select';
 
@@ -12,11 +12,18 @@ import { loadModule } from './select';
  *      `terminate()` and replace, which also reclaims the high-water mark of
  *      linear memory. That is why this file holds no state the client cannot
  *      rebuild: being killed is a normal event here, not an error path.
+ *
+ * Detecting that second case is this file's job. A trapped instance traps
+ * again on every subsequent call, so a worker that keeps accepting work after
+ * a fault turns one real error into a sequence of unrelated-looking ones — and
+ * the second error is the one that makes somebody stop trusting the tool.
  */
 
 let modulePromise: Promise<PochoirModule> | null = null;
 /** The last image handed to us, kept so a slider drag does not re-upload it. */
 let image: Uint8Array | null = null;
+/** Set once the instance has faulted. From then on this worker only says so. */
+let poisoned = false;
 
 function engine(): Promise<PochoirModule> {
   modulePromise ??= loadModule();
@@ -25,21 +32,44 @@ function engine(): Promise<PochoirModule> {
 
 self.onmessage = async (event: MessageEvent<Request>) => {
   const request = event.data;
-  try {
-    const reply = await handle(request);
-    (self as DedicatedWorkerGlobalScope).postMessage(reply, transfersOf(reply));
-  } catch (error) {
-    const failure: Failure =
-      error instanceof EngineError
-        ? { kind: error.kind, message: error.message }
-        : { kind: 'internal', message: String((error as Error)?.message ?? error) };
-    (self as DedicatedWorkerGlobalScope).postMessage({
+
+  if (poisoned) {
+    reply({
       id: request.id,
       ok: false,
-      failure,
-    } satisfies Response);
+      failure: {
+        kind: 'internal',
+        message: 'this worker holds a faulted engine instance',
+        fatal: true,
+      },
+    });
+    return;
+  }
+
+  try {
+    reply(await handle(request));
+  } catch (error) {
+    reply({ id: request.id, ok: false, failure: failureFor(error) });
   }
 };
+
+function reply(message: Response): void {
+  (self as DedicatedWorkerGlobalScope).postMessage(message, transfersOf(message));
+}
+
+function failureFor(error: unknown): Failure {
+  // A fault poisons the instance: say so, and refuse everything afterwards.
+  if (error instanceof EngineFault) {
+    poisoned = true;
+    return { kind: 'internal', message: error.message, fatal: true };
+  }
+  // A status that came back cleanly. The instance is fine and keeps working —
+  // an unsupported character must not cost the user their warm engine.
+  if (error instanceof EngineError) {
+    return { kind: error.kind, message: error.message };
+  }
+  return { kind: 'internal', message: String((error as Error)?.message ?? error) };
+}
 
 async function handle(request: Request): Promise<Response> {
   switch (request.kind) {

@@ -130,11 +130,22 @@ export class EngineClient {
       name: 'pochoir-engine',
     });
     worker.onmessage = (event: MessageEvent<Response>) => {
-      const entry = this.#pending.get(event.data.id);
-      if (!entry) return;
-      clearTimeout(entry.timer);
-      this.#pending.delete(event.data.id);
-      entry.resolve(event.data);
+      const message = event.data;
+      const entry = this.#pending.get(message.id);
+      if (entry) {
+        clearTimeout(entry.timer);
+        this.#pending.delete(message.id);
+        entry.resolve(message);
+      }
+      // Settle the request that faulted *first*, so its caller gets the real
+      // reason, then discard the worker. The recovery path is the one that
+      // already exists for a timeout: the next call builds a fresh worker and
+      // re-uploads the image.
+      if (!message.ok && message.failure.fatal) {
+        this.terminate(
+          new ClientError('internal', 'the engine instance faulted and was discarded'),
+        );
+      }
     };
     worker.onerror = () => {
       this.terminate(new ClientError('internal', 'the engine worker stopped'));

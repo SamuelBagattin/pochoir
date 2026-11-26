@@ -23,4 +23,10 @@ export type Response =
 export interface Failure {
   kind: 'decode' | 'unsupported' | 'oom' | 'argument' | 'internal' | 'no-image';
   message: string;
+  /**
+   * The worker's instance faulted and it will not serve another request. The
+   * client discards the worker on seeing this; the next call builds a fresh
+   * one and re-uploads the image.
+   */
+  fatal?: boolean;
 }
