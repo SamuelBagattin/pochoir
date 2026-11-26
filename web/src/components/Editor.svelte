@@ -14,7 +14,6 @@
     type MarkOptions,
     type TileDensity,
   } from '../engine/options';
-  import { USING_STUB } from '../engine/select';
 
   /** Longest edge of the preview bitmap. Enough for a 27" display at 2x. */
   const PREVIEW_MAX_PX = 1600;
@@ -173,25 +172,35 @@
     scheduleRender();
   }
 
+  /**
+   * One engine status, one sentence. The mapping is deliberately flat and
+   * total rather than clever: every kind the client can produce is named, so
+   * adding one to `ClientFailureKind` is a type error here rather than a
+   * silent fall through to `generic`.
+   */
   function messageFor(error: unknown): string {
-    if (error instanceof ClientError) {
-      switch (error.kind) {
-        case 'timeout':
-          return t.errors.timeout;
-        case 'decode':
-        case 'unsupported':
-          return t.errors.decode;
-        case 'unsupported-browser':
-          unsupported = true;
-          return t.errors.unsupported;
-        case 'oom':
-        case 'internal':
-          return t.errors.crashed;
-        default:
-          return t.errors.generic;
-      }
+    if (!(error instanceof ClientError)) return t.errors.generic;
+    switch (error.kind) {
+      case 'argument':
+        return t.errors.refused;
+      case 'decode':
+        return t.errors.decode;
+      case 'unsupported':
+        return t.errors.unsupportedFormat;
+      case 'oom':
+        return t.errors.outOfMemory;
+      case 'internal':
+        return t.errors.crashed;
+      case 'timeout':
+        return t.errors.timeout;
+      case 'no-image':
+        return t.errors.noImage;
+      case 'unsupported-browser':
+        unsupported = true;
+        return t.errors.unsupportedBrowser;
+      default:
+        return t.errors.generic;
     }
-    return t.errors.generic;
   }
 
   const densities: { value: TileDensity; label: string }[] = [
@@ -201,15 +210,8 @@
   ];
 </script>
 
-{#if USING_STUB}
-  <div class="notice">
-    <span class="notice__tag">{t.stub.tag}</span>
-    <p>{t.stub.banner}</p>
-  </div>
-{/if}
-
 {#if unsupported}
-  <p class="alert" role="alert">{t.errors.unsupported}</p>
+  <p class="alert" role="alert">{t.errors.unsupportedBrowser}</p>
 {/if}
 
 <div class="editor">

@@ -117,23 +117,65 @@ export const fr = {
     suffix: '-filigrane',
   },
 
+  /**
+   * One message per engine status. Two rules they are written to, both of
+   * which matter more than they look:
+   *
+   *   - Say whose fault it is, accurately. Someone who has just handed a
+   *     watermarking tool a photograph of their passport and received an
+   *     error will assume they did something wrong. Where they did not, the
+   *     message says so.
+   *   - Name the next action, or admit there is not one. "Une erreur est
+   *     survenue" is the message these replace.
+   *
+   * Never blame the document: "ce fichier est invalide" reads as a verdict on
+   * the user's identity papers, where "n'a pas pu être lu" is a verdict on
+   * our decoder, which is what it actually is.
+   */
   errors: {
     title: 'Une erreur est survenue',
+
+    /**
+     * Status 1, BadArgument. The engine groups two things here: a parameter
+     * out of range, and a mark the font cannot draw. No control can produce
+     * the first, and the engine sends no payload naming the second, so this
+     * message has to cover both while pointing at the only cause a user can
+     * actually hit. Measured: every realistic French input is accepted —
+     * accents, É À Î Ô Ç, œ, €, « », the narrow no-break space, the em dash,
+     * the ellipsis, and decomposed NFD input — and emoji and non-Latin
+     * alphabets are refused.
+     */
+    refused:
+      'Le moteur a refusé ce filigrane. Les emoji et les alphabets non latins ne sont pas pris en charge par la police de Pochoir : s’il y en a dans votre texte, retirez-les.',
+
+    /** Status 2, DecodeFailed. */
+    decode:
+      'Ce fichier n’a pas pu être lu comme une image. Il est peut-être incomplet ou endommagé. Essayez une autre copie, ou réexportez-la depuis l’application qui l’a produite.',
+
+    /** Status 3, UnsupportedFormat. Reachable past the picker's MIME filter. */
+    unsupportedFormat:
+      'Ce format d’image n’est pas pris en charge. Pochoir accepte le JPEG et le PNG.',
+
+    /** Status 4, OutOfMemory. Not "réduisez la densité": that would be false. */
+    outOfMemory:
+      'Le moteur a manqué de mémoire pour traiter cette image. Elle est probablement trop grande pour cet appareil : essayez une version de plus petite définition.',
+
+    /** Status 5, Internal — and the worker discarding a faulted instance. */
+    crashed:
+      'Le moteur s’est arrêté de façon inattendue. Rechargez la page. Si cela se reproduit avec le même document, c’est un défaut de notre côté.',
+
+    /** The client's own deadline, not a status. */
     timeout:
       'Le calcul a pris trop de temps et a été interrompu. Essayez une image plus petite, ou réduisez la densité.',
-    crashed:
-      'Le moteur s’est arrêté de façon inattendue. Rechargez la page ou essayez un autre fichier.',
-    decode:
-      'Ce fichier n’a pas pu être lu comme une image. Il est peut-être corrompu ou dans un format inattendu.',
-    unsupported:
-      'Votre navigateur ne prend pas en charge les fonctions nécessaires (WebAssembly dans un Web Worker). Mettez-le à jour pour utiliser Pochoir.',
-    generic: 'Le calcul a échoué.',
-  },
 
-  stub: {
-    tag: 'Démonstration',
-    banner:
-      'Le moteur Rust/WebAssembly n’est pas encore branché. Le filigrane affiché est calculé par le navigateur et le PDF produit est un fichier de démonstration. Le document ne quitte pas pour autant votre appareil.',
+    /** No worker, or no WebAssembly, or the module would not instantiate. */
+    unsupportedBrowser:
+      'Votre navigateur ne prend pas en charge les fonctions nécessaires (WebAssembly dans un Web Worker). Mettez-le à jour pour utiliser Pochoir.',
+
+    /** Should be unreachable: the export button is disabled without a file. */
+    noImage: 'Choisissez d’abord un document.',
+
+    generic: 'Le calcul a échoué.',
   },
 
   privacy: {
