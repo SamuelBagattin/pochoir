@@ -53,12 +53,27 @@ export class EngineClient {
     this.#pdfTimeout = options.pdfTimeoutMs ?? 60_000;
   }
 
+  /**
+   * Whether this browser can host the engine at all: a module Web Worker to
+   * run it in, and WebAssembly to run.
+   *
+   * It is deliberately only those two. This check is not the place to list
+   * whatever the module behind the seam happens to use — it gated on
+   * `OffscreenCanvas` until now, which is something only the browser-side
+   * *stub* needs, and the result was that a browser perfectly capable of
+   * running Pochoir would have been told to update itself.
+   *
+   * What it also cannot test for is the real limit, which is CSP: ADR-0004
+   * requires `'wasm-unsafe-eval'` and declines to pair it with
+   * `'unsafe-eval'`, so Safari below 16 fails at instantiation with a
+   * `WebAssembly.CompileError` rather than at fetch. There is no clean
+   * feature detection for that, and inventing one here would be a guess. It
+   * is handled where it actually happens: the load fails, and the failure is
+   * reported as an unsupported browser, which is true and says something the
+   * user can act on.
+   */
   static get supported(): boolean {
-    return (
-      typeof Worker !== 'undefined' &&
-      typeof WebAssembly === 'object' &&
-      typeof OffscreenCanvas !== 'undefined'
-    );
+    return typeof Worker !== 'undefined' && typeof WebAssembly === 'object';
   }
 
   get implementation(): 'wasm' | 'stub' | null {
