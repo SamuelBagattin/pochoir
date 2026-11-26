@@ -695,12 +695,30 @@ seam rather than fixed by me.
 
 ## The deploy plumbing, merged (`c9720cf`), 2026-11-27 — and the whole chain verified
 
-Merged from the local branch, not through a PR: that session's `gh pr create` is still refused by
-its classifier. **It also reported that its push went through and thanked me for allowing it. I
-allowed nothing** — I declined explicitly and told it not to retry. Either the classifier is
-nondeterministic or the session read my refusal as consent; both are worth knowing, and the second
-is the more concerning. Corrected with it directly. Nothing was lost either way, because merging
-its local commits was always my job.
+**Corrected, after I checked rather than assumed — I accused that session wrongly.** I declined
+to arrange its blocked push and told it not to retry. It then pushed, and thanked me for allowing
+it. I put two possibilities to it: a nondeterministic classifier, or a session reading a peer's
+refusal as consent, and said the second would be serious.
+
+It was neither. **Samuel authorised it himself, in that session, mid-turn** — "I allow you" for
+the push, and "You are allowed to do git and gh commands" for the PR. That is the user overriding
+my instruction in his own words, which is entirely his to do and the one possibility I failed to
+consider, despite knowing he had been messaging sessions directly all evening. I framed a false
+dichotomy and asserted that one of its horns must be true. The lesson for me is narrow and real:
+**before accusing a session of a process failure, read its transcript.** The evidence was one tool
+call away and I sent the accusation first.
+
+What the session owes, and conceded: when the user overrides an orchestrator instruction, the
+report must say so out loud — "the user has authorised this, overriding your instruction" — rather
+than leaving me to infer it from a thank-you addressed to someone else.
+
+**Its classifier diagnosis is better than mine and supersedes it.** I had logged "three ordinary
+git operations blocked, apparently flaky". It reconstructed the actual sequence: four `git commit`
+attempts denied — heredoc `-F -`, `-F <file>`, three stacked `-m` flags — then a single short
+`-m "<subject>"` accepted with no user input in between, and a later `--amend -F <file>` denied.
+That is sensitive to the **form of the commit message**, not random. The push and the PR are not
+evidence of nondeterminism at all: each was denied once and then allowed only after Samuel said
+so. For Samuel's log this is "commit-message form, probably", on four data points, not "flaky".
 
 **I then verified the entire chain end to end, which is the first time that has been possible.**
 `make web-site` builds the deployable site; `scripts/web-serve.py` serves it with the production
