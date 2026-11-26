@@ -119,6 +119,20 @@ pub const MAX_MARK_CHARACTERS: usize = 200;
 /// across the whole page first.
 pub const JITTER_FRACTION: f32 = 0.15;
 
+/// Below this fraction of the font size the caller asked for, a mark is
+/// reported as having been shrunk.
+///
+/// A quarter smaller than requested is the point at which somebody who chose a
+/// size deserves to be told they did not get it. Like
+/// [`Mark::colour_is_too_pale`], this is a **warning and never an error**: the
+/// mark is still drawn, and the alternative — refusing — is worse on every
+/// input that is merely long. See ADR-0007 Decision 2.
+///
+/// It is deliberately a statement about the size the caller asked for and not
+/// about legibility, which we have not measured and would not know how to
+/// state honestly.
+pub const FAINT_SHRINK_RATIO: f32 = 0.75;
+
 /// Luminance above which a colour is called too pale to survive a photocopier.
 ///
 /// Rec. 709 relative luminance on the sRGB values directly, which is a rough
@@ -325,7 +339,7 @@ pub fn unsupported_characters(text: &str) -> Result<Vec<char>> {
     Ok(out)
 }
 
-/// What [`compose`] did, for tests and for a future preview.
+/// What [`compose`] did, for the caller to report and for a future preview.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Composition {
     /// How the text was laid out, including whether it had to shrink.
@@ -334,6 +348,37 @@ pub struct Composition {
     pub tiles: usize,
     /// The blur σ actually used, in pixels.
     pub sigma_px: f32,
+    /// The font size the mark's parameters asked for, in pixels.
+    ///
+    /// [`Layout::font_size_px`] is what it was actually drawn at, which is
+    /// smaller whenever the text had to be shrunk to fit.
+    pub requested_font_size_px: f32,
+}
+
+impl Composition {
+    /// The fraction of the requested font size the mark was drawn at.
+    ///
+    /// 1.0 when nothing was shrunk. Never above 1.0: the layout only ever
+    /// shrinks.
+    #[must_use]
+    pub fn shrink_ratio(&self) -> f32 {
+        if self.requested_font_size_px > 0.0 {
+            (self.layout.font_size_px / self.requested_font_size_px).min(1.0)
+        } else {
+            1.0
+        }
+    }
+
+    /// `true` when the mark had to be drawn markedly smaller than asked for.
+    ///
+    /// A warning for the caller to pass on, never an error — see
+    /// [`FAINT_SHRINK_RATIO`]. ADR-0007 Decision 2 keeps the drawing and adds
+    /// the warning, because silently succeeding beats refusing on text that is
+    /// merely long, and saying nothing at all is what was actually wrong.
+    #[must_use]
+    pub fn was_shrunk_noticeably(&self) -> bool {
+        self.shrink_ratio() < FAINT_SHRINK_RATIO
+    }
 }
 
 /// Burn `mark` into `pixmap`.
@@ -386,6 +431,7 @@ pub fn compose(pixmap: &mut Pixmap, mark: &Mark, seed: u64, jitter: bool) -> Res
         layout,
         tiles,
         sigma_px,
+        requested_font_size_px: requested,
     })
 }
 

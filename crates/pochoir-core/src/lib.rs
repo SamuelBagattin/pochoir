@@ -283,7 +283,7 @@ pub fn render_to_pdf<S>(source: &S, options: &OutputOptions) -> Result<Vec<u8>>
 where
     S: PageSource + ?Sized,
 {
-    render_to_pdf_observed(source, options, |_, _| {})
+    render_to_pdf_observed(source, options, |_, _, _| {})
 }
 
 /// [`render_to_pdf`], with a look at each page's pixels after the mark and
@@ -296,10 +296,17 @@ where
 /// comparison of the finished PDF would break whenever the JPEG encoder
 /// changed, which tells you nothing about the watermark.
 ///
-/// `observe` is handed the page index and the composited pixmap. It cannot
-/// change them: a hook that could would turn the pure function this crate
-/// promises into something else. A caller wanting the bytes themselves can
-/// clone inside the closure; the golden tests only fingerprint.
+/// `observe` is handed the page index, the composited pixmap, and what the
+/// compositor did — [`mark::Composition`], or `None` on an unmarked render. It
+/// cannot change any of them: a hook that could would turn the pure function
+/// this crate promises into something else. A caller wanting the bytes
+/// themselves can clone inside the closure; the golden tests only fingerprint.
+///
+/// The `Composition` is there because some of what the mark did is worth
+/// telling the user about and is not visible in the pixels: in particular
+/// [`mark::Composition::was_shrunk_noticeably`], which says the text would not
+/// fit at the size they chose. ADR-0007 Decision 2 requires that to be
+/// reported rather than silently accepted.
 ///
 /// The same hook is what a live preview will use, which is the other reason it
 /// is a closure rather than a debug flag.
@@ -314,7 +321,7 @@ pub fn render_to_pdf_observed<S, F>(
 ) -> Result<Vec<u8>>
 where
     S: PageSource + ?Sized,
-    F: FnMut(usize, &Pixmap),
+    F: FnMut(usize, &Pixmap, Option<&mark::Composition>),
 {
     options.validate()?;
     let mut writer = pdf::PdfWriter::new();
@@ -327,13 +334,16 @@ where
         // came from a JPEG, a PNG or a rasterised PDF page, which is how
         // ADR-0002 Decision 1's "one compositor, operating on an RGBA pixmap"
         // is made structural rather than a thing somebody has to maintain.
-        if let Some(mark) = &options.mark {
-            let seed = options
-                .seed
-                .unwrap_or_else(|| mark::derive_seed(&pixmap, mark));
-            mark::compose(&mut pixmap, mark, seed, options.jitter)?;
-        }
-        observe(index, &pixmap);
+        let composition = match &options.mark {
+            Some(mark) => {
+                let seed = options
+                    .seed
+                    .unwrap_or_else(|| mark::derive_seed(&pixmap, mark));
+                Some(mark::compose(&mut pixmap, mark, seed, options.jitter)?)
+            }
+            None => None,
+        };
+        observe(index, &pixmap, composition.as_ref());
         // The density written into the JPEG is the one the page actually
         // prints at, not the one the caller asked for. Capping a page to A4
         // leaves the pixels alone and shrinks the sheet, so the two differ, and
@@ -359,10 +369,30 @@ where
 /// PNG, [`Error::Decode`] if the decoder refused it, and
 /// [`Error::InvalidParameter`] for bad options.
 pub fn image_to_pdf(bytes: &[u8], options: &OutputOptions) -> Result<Vec<u8>> {
+    image_to_pdf_observed(bytes, options, |_, _, _| {})
+}
+
+/// [`image_to_pdf`], with [`render_to_pdf_observed`]'s hook.
+///
+/// The whole write path *and* a look at what it did, which is what a caller
+/// needs to warn the user that the mark had to be shrunk — the CLI uses it for
+/// exactly that.
+///
+/// # Errors
+///
+/// As [`image_to_pdf`].
+pub fn image_to_pdf_observed<F>(
+    bytes: &[u8],
+    options: &OutputOptions,
+    observe: F,
+) -> Result<Vec<u8>>
+where
+    F: FnMut(usize, &Pixmap, Option<&mark::Composition>),
+{
     options.validate()?;
     let image = image::decode(bytes)?;
     let page = ImagePage::new(image, options.dpi, options.page_sizing)?;
-    render_to_pdf(&page, options)
+    render_to_pdf_observed(&page, options, observe)
 }
 
 /// Version of the core engine, as declared in its `Cargo.toml`.

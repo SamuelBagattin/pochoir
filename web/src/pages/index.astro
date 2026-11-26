@@ -1,0 +1,39 @@
+---
+import Base from '../layouts/Base.astro';
+import { t } from '../i18n';
+---
+
+<Base title={`${t.site.name} — ${t.site.tagline}`} description={t.home.lede} current="tool">
+  <section class="intro">
+    <div class="wrap">
+      <h1>{t.home.title}</h1>
+      <p class="intro__lede">{t.home.lede}</p>
+      <p class="intro__note">
+        {t.home.note}
+        <a href="/confidentialite/">{t.privacy.title}</a>.
+      </p>
+    </div>
+  </section>
+
+  <div class="wrap">
+    <div id="pochoir-editor"></div>
+  </div>
+</Base>
+
+{/*
+  Mounted by hand rather than with a `client:load` directive, and that is a
+  CSP decision, not a style preference. Astro's island machinery emits three
+  inline things into the document — the `astro-island` custom element, its
+  hydration bootstrap and a `display: contents` style block — and every one of
+  them would force `'unsafe-inline'` into `script-src` and `style-src`. ADR-0004
+  forbids both. With one island on the whole site, hand-mounting costs four
+  lines and buys a policy we can actually ship. Astro bundles this script to an
+  external, content-hashed file.
+*/}
+<script>
+  import { mount } from 'svelte';
+  import Editor from '../components/Editor.svelte';
+
+  const target = document.getElementById('pochoir-editor');
+  if (target) mount(Editor, { target });
+</script>

@@ -23,18 +23,64 @@ own git worktree.
 
 The one section to read if you are compacted mid-flight. Everything below is detail.
 
-1. **Docs + refusal-path fix** — in flight with `phase2-mark`. Four items: the warning when the
-   mark shrinks below a fraction of the request (because `MarkDoesNotFit` is unreachable and
-   ADR-0007 describes behaviour the code lacks), "no signing key" into ADR-0004 open question 2,
-   0006 and 0007 added to `CLAUDE.md`'s binding list, the Apache-2.0 font line in `LICENSE.md`.
-2. **Web UI** — in flight with `web-ui`. `web/` only. `web/DESIGN.md` before any CSS; built
-   against the stubbed ABI. Review it against ADR-0001's "None" rows (no state library, no CSS
-   framework, no icon set, no file-drop crate), no CDN, no analytics, and verify the RGAA claims
-   rather than reading them.
-3. **wasm bindings** — not briefed. Blocking the MVP. Two traps that do not announce themselves:
-   the crate **must be a workspace member** or reproducibility breaks silently, and
-   `#![forbid(unsafe_code)]` vs `#[no_mangle]` under edition 2024 has to be resolved
-   (`make wasm` emits a 43-byte empty module today). The ABI is fixed and recorded below.
+**Overnight 2026-11-26/27.** Samuel went to sleep having said: push the project as far as it
+goes, deploy if it can be deployed, **do not buy the domain**, maximum development by morning,
+and watch for context bloat. My reading of the deploy half, which he should check: there is no
+Cloudflare credential in this session, and his own standing rule is that a production approval
+must be given *in the deploying session* — a relayed "feel free" cannot satisfy it. So the deploy
+path gets built and verified up to a dry run, and nobody presses the button.
+
+1. ~~Docs + refusal-path fix~~ — **merged as `ada5f2b` (PR #8).**
+2. ~~Web UI~~ — **merged as `94141cc` (PR #9).**
+3. **wasm bindings** — in flight with `wasm-bindings`
+   (`local_c80a5861-fbfd-4348-92e3-734366a6dbb2`). The critical path: until it lands, the browser
+   runs a stub and the product does not actually work. Four ABI questions answered to it (below).
+4. **Deploy plumbing and CI for `web/`** — in flight with `deploy-plumbing`
+   (`local_d59cc1e8-b67d-4dc1-846b-60dedb26a3f7`). Owns `web/**`, `.github/**`, new `Makefile`
+   targets; told explicitly not to touch the `wasm` target, `crates/**` or the dependency guard,
+   and **not to deploy or handle a credential**.
+5. **Integration** — goes to the **`web-ui` session**, which is alive, holds the context and has
+   been told to stand by: swap the stub for the real module, wire the seven status codes to
+   French wording, delete whatever quality modes have no engine behind them. It is at 340k of 1M,
+   past the 300k rotation mark; kept deliberately because integration is bounded and re-learning
+   the island mounting, the CSP constraint and the worker protocol would cost more than the
+   rotation saves. Watch it; rotate if it nears 600k. Meanwhile it is drafting the French wording
+   for all eight statuses and the integration checklist into the shared notes folder — useful
+   work that touches no file `deploy-plumbing` owns.
+
+Then: **tell Samuel the moment the MVP is genuinely usable.** He has said not to register
+`pochoir.app` yet, so the trigger is now "tell him", not "tell him so he can buy it".
+
+**Rotation watch:** `phase2-mark` ended its work at ~441k and is done. Ask every live session for
+its context usage with its report.
+
+### The ABI had drifted from the engine — three gaps, found before either side shipped
+
+The UI session had already written `web/src/engine/{abi,options,module}.ts` against the ABI I
+fixed. I snapshotted all three into `side-session-notes/.../abi-contract/` with a README, so the
+bindings session reads a stable contract rather than another session's uncommitted worktree, and
+checked the snapshot against the engine line by line. Three disagreements, none of which either
+session could have seen from where it sits:
+
+1. **Blur.** The contract packs `blurPx` at offset 28, "px at render resolution", default 0.6,
+   range 0..3. The engine has `blur_ratio`, a fraction of the font size, default 0.015, max 0.06.
+   The engine is right: **ADR-0007 corrected exactly this**, and the UI stub was written from
+   ADR-0002's pre-correction wording. Resolved my way — the wire field is a ratio. The bindings
+   implement it; **I owe the UI session the rename**, and that is mine to send, not theirs to find.
+2. **Two of the four quality modes may have nothing behind them.** `compact` needs a pixel
+   downsample and `lossless` needs a PNG/`/FlateDecode` image, while `OutputOptions` carries only
+   `quality: u8` and `dpi`. Told the bindings session to **measure which the engine can honour and
+   return `BAD_ARGUMENT` for the rest** — never map an unimplementable mode onto a nearby quality
+   number. A user who picks `lossless` and silently gets JPEG q92 has been lied to about their
+   document. Scope for the gap is mine once measured; it may narrow the MVP's mode list.
+3. `dpi` is `u32` on the wire, `f32` in the engine. Harmless, range-check before the cast.
+
+And one the contract got right that looked wrong: it flagged that ADR-0002 gives the angle default
+as -30 with a range of "0-90", read it as a magnitude allowing both tilt directions, and said it
+was flagging rather than silently choosing. `Mark::validate` already accepts `-90.0..=90.0`.
+Confirmed, no change. **That is the behaviour I want from a session** — it found a real ambiguity
+in our own document, took the sane reading, and said so instead of burying it.
+
 4. **Deploy plumbing** — last, and not from inertia: it writes into `web/` and has nothing to
    test against before the UI exists.
 
@@ -347,6 +393,133 @@ the existing `colour_is_too_pale()` warning.
 That session's permission classifier refused `git commit -F`, `git commit --amend` and
 `git push -u`, so three commits with written messages became one with a one-line subject. His
 configuration, and it cost us commit history. Surfaced to him; no workaround attempted.
+
+
+## Merges 8 and 9 — the refusal fix, and the UI exists (`ada5f2b`, `94141cc`), 2026-11-26
+
+**PR #8 — I was right that there was a bug and wrong about what it was.** I had reported the
+refusal path unreachable. The session reproduced before changing anything and found something
+sharper: `MarkDoesNotFit` *is* reachable, but whether it fires depends on the page's **shape**.
+I reproduced its matrix myself on generated 4032x3024 and 4032x2268 fixtures:
+
+| page | 200 x `M` | 200 x `a` | 200 chars, no spaces |
+| --- | --- | --- | --- |
+| 4:3 | **refused, exit 1** | drawn, 39% | drawn, 38% |
+| 16:9 | drawn, 32% | drawn, 50% | drawn, 48% |
+
+The mechanism holds up under my own arithmetic: the font floor is a fraction of the **shorter
+edge** (3024 x 0.035 = 105.8 px requested on 4:3, 2268 x 0.035 = 79.4 px on 16:9, both matching
+the CLI's own figures) while the width budget follows the **rotated extent**, nearer the diagonal.
+Widening a page lowers the floor faster than the budget, so the same string is refused on one
+shape and drawn on another. ADR-0007 Decision 2 now documents that, **says plainly that its first
+version was wrong**, and keeps a test pinning the 4:3 case so the variant cannot go quietly
+unreachable. The warning fires at 38-50% and is silent on a realistic mark and on 195 characters
+that wrap cleanly — I checked both. Output still byte-identical across runs. 282 tests.
+
+Also in #8: ADR-0004 open question 2 closed in place (no signing key, Samuel, with the original
+question kept beneath), and `LICENSE.md` now carries the bundled Apache-2.0 font per §4.
+
+**PR #9 — the UI, verified by building and driving it.** Zero inline `<script>`, zero inline
+`<style>`, zero `style=` attributes in the built output, which is what makes the strict CSP true
+rather than aspirational; no external origin referenced; the only "analytics" strings are the
+confidentialité page saying there are none. 112K total, 88 KB of js+css. **Five devDependencies
+and no runtime dependency at all** — ADR-0001's None rows hold. I fed a PNG through the real file
+input in a browser and watched the preview decode it and composite a tiled -30° mark at 0.30
+opacity; the presets fill the text and the mark redraws.
+
+It had also caught three real accessibility defects by testing rather than asserting — the file
+input sat outside the `:focus-within` element so tabbing produced no visible focus at all — and
+says plainly that this is AA-by-construction plus checks, **not an audit**. Correct framing.
+
+**Two process notes.** Its report quoted `cdda494` as the final SHA; the real head was `2cda26b`,
+one commit later, containing the blur re-key it made after my message arrived. Benign, but the
+review bar's warning about quoted SHAs earned its keep again — check the ref, not the report.
+And `web/` is merged with **no Makefile target and no CI coverage**, which is the first thing the
+`deploy-plumbing` session was briefed to fix.
+
+### The four ABI questions, answered to the bindings session
+
+1. **Preview pixels are RGBA8, row-major, unpadded, non-premultiplied** — `width * height * 4`
+   exactly. That is what `Pixmap` already is, so it is a straight copy out.
+2. **No `kind` field.** `width > 0` discriminates bitmap from PDF unambiguously *provided* a PDF
+   result always sets width and height to 0 — so that becomes a documented invariant with a test,
+   not an accident. I will not add a field whose value is already carried.
+3. **`pochoir_alloc` returns 0 on failure**, and `alloc(0)` returning 0 is not a failure.
+4. **On a non-OK status, `ptr`/`len` carry a UTF-8 payload.** No new export, and it is the
+   difference between "the input format is not supported" and naming the character the font
+   subset cannot draw — which is the error a French user actually hits.
+
+**Corrected within the hour, by the UI session, and it was right.** I had specified that payload
+as "human-readable specifics". Wrong: this interface is French, and an English sentence produced
+in Rust is a string the browser can neither show nor translate. The payload is **data the UI
+interpolates into its own wording, never a sentence** — the offending characters themselves,
+concatenated, all of them rather than the first, no prose and no `U+` notation, and no payload at
+all when there is nothing to name. Sixth time a session has corrected me.
+
+**Two status codes added on its proposal, and these numbers are now fixed:**
+
+    0 OK · 1 BAD_ARGUMENT · 2 DECODE_FAILED · 3 UNSUPPORTED_FORMAT · 4 OUT_OF_MEMORY
+    5 INTERNAL · 6 TEXT_DOES_NOT_FIT (MarkDoesNotFit) · 7 UNSUPPORTED_CHARACTER
+
+The old set collapsed both of ADR-0007's named refusals into one bucket. ADR-0007 Decision 6 asks
+the engine to name *every* unsupported character precisely because its caller is the web UI, and
+until now the ABI could not carry the answer at all. The browser's reader is already merged and
+is bounds-checked — non-zero ptr and len, 4096-byte cap, range checked against current memory,
+strict UTF-8 — so an absent, oversized or malformed payload degrades to no detail, not a crash.
+
+**ADR numbers: 0008 is the wasm ABI (bindings session), 0009 is deploy/CI if needed.** I had
+handed 0008 to both sessions and corrected it.
+
+### A reported bug that was not ours
+
+The UI session found that seeded tile jitter of ±½ step can push a mark off a page that fits only
+one column, and said it would bite the real engine too. It would not: the engine bounds the swing
+at `min(JITTER_FRACTION * step, (step - stamp) / 2)` with `JITTER_FRACTION = 0.15`, so the offset
+can never exceed the free gap. Checked before forwarding; the bug was in their canvas stub. Worth
+recording as the counter-example — a session's finding about *another* component is still a claim.
+
+## Four defects in merged code, found by writing a checklist, 2026-11-27
+
+The `web-ui` session was told to stand by and draft the French status wording plus an integration
+checklist. Writing the checklist found **four real bugs in code already on `main`**, none of which
+bites until a real module sits behind the seam. I verified all four against merged `main` before
+accepting them:
+
+1. **The worker keeps serving on a poisoned instance.** `panic = "abort"` traps a wasm instance
+   permanently; the trap surfaces as a `RuntimeError` that `worker.ts`'s catch swallows, and the
+   handler goes on accepting work. One real error becomes a sequence of unrelated-looking ones,
+   and the second is the one that makes a user distrust the tool. Confirmed: the catch posts a
+   failure and nothing marks the instance dead.
+2. **Stale requests are sent, not just discarded.** The generation counter is client-side, so a
+   synchronous engine runs every queued render to completion. Three seconds of dragging buys ten
+   seconds of catching up. Needs latest-wins coalescing, not a longer debounce.
+3. **The error detail never reaches the UI.** `worker.ts` builds `{kind, message}` and `Failure`
+   has no third field, so the whole status-7 payload mechanism was wired at one end only.
+   Its own regression from the round before, caught by itself a round later.
+4. **`EngineClient.supported` gates on `OffscreenCanvas`**, a stub requirement, so browsers that
+   could run Pochoir are told to update.
+
+Plus: `dpi` is `u32` on the wire against the engine's `f32`, and `>>> 0` truncates a fractional
+value and wraps an out-of-range one into a plausible large DPI. Fixed now, while it cannot fire.
+
+**Briefed to the `web-ui` session, scoped to `web/src/**` only.** I checked `deploy-plumbing`'s
+worktree first: it holds `web/public/_headers`, `web/wrangler.jsonc` and new `scripts/*.py`, and
+nothing under `web/src/`, so the two lanes do not touch. Deferred deliberately: a second worker
+for exports (a design decision, not a correctness fix, and unmeasurable against a stub), the
+wasm URL and integrity hash (outputs of the deploy session's build work), and the 15s/60s
+timeouts (guesses that want one measurement on a mid-range Android, which nobody has tonight).
+
+**The best catch in the wording note is one no code review finds:** ADR-0007 D6 reports a leftover
+combining mark like any other character, and a bare U+0301 interpolated into a sentence attaches
+itself to the closing guillemet — so the character we are naming renders as a corrupt quote. It is
+prefixed with U+25CC DOTTED CIRCLE. That would have shipped.
+
+### Session progress at this point
+
+`wasm-bindings` has `crates/pochoir-wasm/`, **ADR-0008 written**, a generated allowlist, a
+`scripts/check-repro.sh`, and modifications to `Cargo.toml`, `Makefile` and `check-deps.sh` — all
+inside its lane. `deploy-plumbing` has `_headers`, `wrangler.jsonc` and three new scripts,
+likewise. Neither has strayed.
 
 ## Reserved numbers
 
