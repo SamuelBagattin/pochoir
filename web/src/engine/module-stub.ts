@@ -57,8 +57,14 @@ export class StubModule implements PochoirModule {
  * Compositing
  * ---------------------------------------------------------------------- */
 
-const GAP_X: Record<TileDensity, number> = { low: 2.4, normal: 1.6, high: 1.05 };
-const GAP_Y: Record<TileDensity, number> = { low: 6, normal: 4, high: 2.6 };
+/**
+ * Both gaps are multiples of the LINE HEIGHT, per ADR-0007 Decision 5 — not of
+ * the text width, which ADR-0002 specified and which is unstable once the mark
+ * is as wide as the page. 1.6 across and 4 down at `normal`, doubled at `low`
+ * and halved at `high`.
+ */
+const GAP_X: Record<TileDensity, number> = { low: 3.2, normal: 1.6, high: 0.8 };
+const GAP_Y: Record<TileDensity, number> = { low: 8, normal: 4, high: 2 };
 
 async function composite(
   image: Uint8Array,
@@ -95,46 +101,53 @@ async function composite(
   ctx.font = `600 ${fontPx}px ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  if (options.blurPx > 0 && 'filter' in ctx) {
+  if (options.blurRatio > 0 && 'filter' in ctx) {
+    // Sigma is a fraction of the font size (ADR-0007 Decision 3), so this is
+    // resolution-independent in the same way the glyph size already is.
     // Safari does not implement OffscreenCanvas filter; the real engine blurs
     // in Rust precisely because of that (ADR-0001). Here it is best effort.
-    ctx.filter = `blur(${(options.blurPx * fontPx) / 48}px)`;
+    ctx.filter = `blur(${options.blurRatio * fontPx}px)`;
   }
 
   const lineH = fontPx * 1.25;
   const blockH = lineH * lines.length;
   const blockW = Math.max(...lines.map((l) => ctx.measureText(l).width));
 
-  const stepX = blockW * (1 + GAP_X[options.density]);
-  const stepY = blockH + lineH * GAP_Y[options.density] * 0.5;
+  const freeX = lineH * GAP_X[options.density];
+  const freeY = lineH * GAP_Y[options.density];
+  const stepX = blockW + freeX;
+  const stepY = blockH + freeY;
 
-  // The jitter is a quarter of a step, not half: ADR-0002 wants the tiling to
-  // move between runs so two marked copies cannot be differenced, but a large
-  // offset on a page that only fits one column can push the whole mark off the
-  // sheet. Coverage first, then jitter.
-  const rand = lcg(options.seed === 0n ? 0x9e3779b9n : options.seed);
-  const jitterX = (rand() - 0.5) * stepX * 0.5;
-  const jitterY = (rand() - 0.5) * stepY * 0.5;
+  // The global phase, which is what stops two marked copies of one document
+  // being differenced back to the clean original.
+  const phase = lcg(options.seed === 0n ? 0x9e3779b9n : options.seed);
+  const phaseX = (phase() - 0.5) * stepX;
+  const phaseY = (phase() - 0.5) * stepY;
 
   const diagonal = Math.hypot(width, height);
   ctx.translate(width / 2, height / 2);
   ctx.rotate((options.angleDeg * Math.PI) / 180);
 
-  // One step of overscan on every side, so a rotated grid still covers the
+  // One step of overscan on every side, so a rotated lattice still covers the
   // corners and a partially clipped tile at the edge is intentional.
   const reach = diagonal / 2 + Math.max(stepX, stepY);
-  let row = 0;
-  for (let y = -reach; y <= reach; y += stepY, row++) {
-    // Alternate rows are offset by half a step: it tiles better, and each mark
-    // then has to be inpainted separately rather than as a regular lattice.
-    const stagger = row % 2 === 0 ? 0 : stepX / 2;
-    for (let x = -reach; x <= reach; x += stepX) {
+  const cols = Math.ceil((2 * reach) / stepX);
+  const rows = Math.ceil((2 * reach) / stepY);
+  const seed32 = Number(options.seed & 0xffffffffn) >>> 0;
+
+  for (let row = 0; row <= rows; row++) {
+    for (let col = 0; col <= cols; col++) {
+      // ADR-0007 Decision 4: every tile is displaced independently, from a
+      // generator keyed to its own lattice coordinates rather than drawn from
+      // a running stream — so a page that needs one more row does not move
+      // every other row. Capped at half the free gap, because two tiles that
+      // meet composite over each other at twice the chosen opacity.
+      const dx = (tileNoise(seed32, col, row, 0) - 0.5) * freeX;
+      const dy = (tileNoise(seed32, col, row, 1) - 0.5) * freeY;
+      const x = -reach + col * stepX + phaseX + dx;
+      const y = -reach + row * stepY + phaseY + dy;
       lines.forEach((line, i) => {
-        ctx.fillText(
-          line,
-          x + stagger + jitterX,
-          y + jitterY + (i - (lines.length - 1) / 2) * lineH,
-        );
+        ctx.fillText(line, x, y + (i - (lines.length - 1) / 2) * lineH);
       });
     }
   }
@@ -148,7 +161,27 @@ function context2d(canvas: OffscreenCanvas): OffscreenCanvasRenderingContext2D {
   return ctx;
 }
 
-/** A tiny seeded PRNG, so the jitter is reproducible from the seed. */
+/**
+ * A hash of (seed, column, row, axis) in [0, 1). Keyed to the tile's own
+ * lattice coordinates, so each tile's displacement is independent of how many
+ * tiles were drawn before it.
+ */
+function tileNoise(seed: number, col: number, row: number, axis: number): number {
+  let h =
+    (seed ^
+      Math.imul(col + 1, 0x27d4eb2d) ^
+      Math.imul(row + 1, 0x165667b1) ^
+      Math.imul(axis + 1, 0x9e3779b1)) >>>
+    0;
+  h ^= h >>> 15;
+  h = Math.imul(h, 0x2c1b3c6d) >>> 0;
+  h ^= h >>> 12;
+  h = Math.imul(h, 0x297a2d39) >>> 0;
+  h ^= h >>> 15;
+  return (h >>> 0) / 0x1_0000_0000;
+}
+
+/** A tiny seeded PRNG for the global phase, reproducible from the seed. */
 function lcg(seed: bigint): () => number {
   let s = seed & 0xffffffffn;
   return () => {

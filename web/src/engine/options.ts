@@ -22,7 +22,13 @@ export interface MarkOptions {
   fontSizePct: number;
   angleDeg: number;
   opacity: number;
-  blurPx: number;
+  /**
+   * Blur sigma as a FRACTION OF THE FONT SIZE, not a pixel count.
+   * ADR-0007 Decision 3 re-keyed it: ADR-0002's "0.6 px at render resolution,
+   * scaled with DPI" contradicts itself, and at its own default it rounds to a
+   * box radius of 0.28, which an integer-radius box blur turns into a no-op.
+   */
+  blurRatio: number;
   density: TileDensity;
   /** `#rrggbb`. */
   colour: string;
@@ -37,7 +43,7 @@ export const DEFAULT_OPTIONS: Readonly<MarkOptions> = Object.freeze({
   fontSizePct: 3.5,
   angleDeg: -30,
   opacity: 0.3,
-  blurPx: 0.6,
+  blurRatio: 0.015,
   density: 'normal',
   colour: '#1a1a1a',
   seed: 0n,
@@ -52,7 +58,8 @@ export const LIMITS = {
   angleDeg: { min: -90, max: 90, step: 1 },
   fontSizePct: { min: 1, max: 10, step: 0.1 },
   opacity: { min: 0.05, max: 0.8, step: 0.01 },
-  blurPx: { min: 0, max: 3, step: 0.1 },
+  /** ADR-0007 Decision 3. `Mark::validate` rejects anything outside this. */
+  blurRatio: { min: 0, max: 0.06, step: 0.001 },
   textMaxChars: 200,
   textMaxLines: 3,
 } as const;
@@ -83,11 +90,13 @@ const DENSITY_CODES: Record<TileDensity, number> = { low: 0, normal: 1, high: 2 
  *  16  f32   font size, per cent of shorter edge
  *  20  f32   angle, degrees
  *  24  f32   opacity, 0..1
- *  28  f32   blur, px at render resolution
+ *  28  f32   blur sigma, as a fraction of the font size (ADR-0007 D3)
  *  32  u32   tile density
  *  36  u32   colour, 0x00RRGGBB
  *  40  u64   jitter seed
  */
+// Stays 1 through the ADR-0007 blur change: nothing has shipped, so there is
+// no deployed reader to keep compatible with.
 export const OPTIONS_VERSION = 1;
 export const OPTIONS_BYTES = 48;
 
@@ -101,7 +110,7 @@ export function packOptions(o: MarkOptions): Uint8Array {
   v.setFloat32(16, o.fontSizePct, true);
   v.setFloat32(20, o.angleDeg, true);
   v.setFloat32(24, o.opacity, true);
-  v.setFloat32(28, o.blurPx, true);
+  v.setFloat32(28, o.blurRatio, true);
   v.setUint32(32, DENSITY_CODES[o.density], true);
   v.setUint32(36, colourToU32(o.colour), true);
   v.setBigUint64(40, o.seed, true);

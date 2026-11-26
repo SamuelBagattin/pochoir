@@ -80,7 +80,7 @@ diff against:
 | 16 | `f32` | font size, per cent of the page's shorter edge |
 | 20 | `f32` | angle, degrees |
 | 24 | `f32` | opacity, 0..1 |
-| 28 | `f32` | blur, px at render resolution |
+| 28 | `f32` | blur sigma, as a fraction of the font size — `0.0..=0.06`, default `0.015` (ADR-0007 Decision 3) |
 | 32 | `u32` | tile density — 0 low, 1 normal, 2 high |
 | 36 | `u32` | colour, `0x00RRGGBB` |
 | 40 | `u64` | jitter seed |

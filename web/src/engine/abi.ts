@@ -127,7 +127,7 @@ export class WasmModule implements PochoirModule {
     try {
       handle = invoke(img, txt, opts);
       const status = this.ex.pochoir_result_status(handle);
-      if (status !== STATUS.OK) throw errorForStatus(status);
+      if (status !== STATUS.OK) throw errorForStatus(status, this.detailOf(handle));
 
       const ptr = this.ex.pochoir_result_ptr(handle);
       const len = this.ex.pochoir_result_len(handle);
@@ -145,6 +145,28 @@ export class WasmModule implements PochoirModule {
       this.release(opts);
       this.release(txt);
       this.release(img);
+    }
+  }
+
+  /**
+   * Reads `ptr`/`len` as a UTF-8 detail on a failing result, if the engine put
+   * anything there. Speculative and bounds-checked: today's contract says
+   * nothing about those fields on failure, so an engine that leaves them zero
+   * simply yields no detail. It is here so the Rust side can start reporting
+   * which character it refused (ADR-0007 Decision 6) without a change on this
+   * side as well.
+   */
+  private detailOf(handle: number): string | undefined {
+    const ptr = this.ex.pochoir_result_ptr(handle);
+    const len = this.ex.pochoir_result_len(handle);
+    const size = this.ex.memory.buffer.byteLength;
+    if (ptr === 0 || len === 0 || len > 4096 || ptr + len > size) return undefined;
+    try {
+      return new TextDecoder('utf-8', { fatal: true }).decode(
+        new Uint8Array(this.ex.memory.buffer, ptr, len),
+      );
+    } catch {
+      return undefined;
     }
   }
 

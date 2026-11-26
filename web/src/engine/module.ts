@@ -45,23 +45,30 @@ export class EngineError extends Error {
   constructor(
     readonly kind: 'decode' | 'unsupported' | 'oom' | 'argument' | 'internal',
     message: string,
+    /**
+     * Engine-supplied detail, when there is any — the offending characters for
+     * an unsupported-character refusal (ADR-0007 Decision 6), for instance.
+     * Data for the UI to interpolate into its own French wording, never a
+     * sentence to show the user as it stands.
+     */
+    readonly detail?: string,
   ) {
     super(message);
     this.name = 'EngineError';
   }
 }
 
-export function errorForStatus(status: number): EngineError {
+export function errorForStatus(status: number, detail?: string): EngineError {
   switch (status) {
     case STATUS.BAD_ARGUMENT:
-      return new EngineError('argument', 'engine rejected the arguments');
+      return new EngineError('argument', 'engine rejected the arguments', detail);
     case STATUS.DECODE_FAILED:
-      return new EngineError('decode', 'the input could not be decoded');
+      return new EngineError('decode', 'the input could not be decoded', detail);
     case STATUS.UNSUPPORTED_FORMAT:
-      return new EngineError('unsupported', 'the input format is not supported');
+      return new EngineError('unsupported', 'the input format is not supported', detail);
     case STATUS.OUT_OF_MEMORY:
-      return new EngineError('oom', 'the engine ran out of memory');
+      return new EngineError('oom', 'the engine ran out of memory', detail);
     default:
-      return new EngineError('internal', `engine failed with status ${status}`);
+      return new EngineError('internal', `engine failed with status ${status}`, detail);
   }
 }
