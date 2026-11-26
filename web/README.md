@@ -4,17 +4,28 @@ Astro, static output, one Svelte island, hand-written CSS. No runtime
 dependency reaches the browser. The design system this is built to is
 [DESIGN.md](DESIGN.md); read it before changing how anything looks.
 
+`make` is the repository's entry point and `make check` now covers this
+directory:
+
 ```
-pnpm install
-pnpm dev        # http://localhost:4321
-pnpm build      # -> dist/, content-addressed filenames
-pnpm check      # astro check: types across .astro, .svelte and .ts
+make web-build      # build dist/, then attest it
+make web-check      # astro check, no-inline assertion, attestation verified
+make web-serve      # serve dist/ with the PRODUCTION response headers
+make web-reproduce  # build twice from two paths and compare
+make web-deploy-check  # everything a deploy does, except the deploy
 ```
 
-There is no Makefile target for this yet. `make` is the repository's only
-entry point and the root `Makefile` is not this directory's to edit, so adding
-`web-build` / `web-check` targets and calling them from CI is a change the
-owner needs to make.
+`pnpm dev` (<http://localhost:4321>) is still the way to iterate. But note that
+neither `astro dev` nor `astro preview` sends any of the production response
+headers, so the Content-Security-Policy and `Integrity-Policy` this site
+depends on are invisible in both. **`make web-serve` is the one that tells you
+the truth.**
+
+`pnpm build` on its own is *not* a shippable `dist/`. It stops before
+Subresource Integrity, the module preloads and the manifest, and the headers
+make an unattested bundle a blank page rather than a degraded one. Use
+`make web-build`. [ADR-0009](../docs/adr/0009-deploy-plumbing-and-web-attestation.md)
+explains why that is a build step and not an optional extra.
 
 ## Layout
 
@@ -103,16 +114,12 @@ Content-Security-Policy: default-src 'none'; script-src 'self' 'wasm-unsafe-eval
 
 As a Cloudflare `_headers` rule:
 
-```
-/*
-  Content-Security-Policy: default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; manifest-src 'none'; media-src 'none'
-  Cross-Origin-Opener-Policy: same-origin
-  X-Content-Type-Options: nosniff
-  Referrer-Policy: no-referrer
-
-/_pochoir/*
-  Cache-Control: public, max-age=31536000, immutable
-```
+That file now exists: [`public/_headers`](public/_headers), shipped inside the
+bundle and read by Cloudflare from the root of the assets directory. It also
+carries `Integrity-Policy: blocked-destinations=(script)`, which is only
+shippable because the build emits a `modulepreload` link with a hash for every
+chunk the entry script imports — measured: without those links that header
+blocks the import and the page is blank. See ADR-0009 Decision 5.
 
 Notes, in the order they will matter:
 
@@ -200,5 +207,12 @@ request description; the short version:
 
 ## Not done here, on purpose
 
-No deployment, no Cloudflare config, no CI wiring, no PDF input, no HEIC, no
-multi-file handling, no exclusion zone, no PWA, no dark mode.
+No PDF input, no HEIC, no multi-file handling, no exclusion zone, no PWA, no
+dark mode.
+
+The Cloudflare config and the CI wiring now exist —
+[`wrangler.jsonc`](wrangler.jsonc), [`public/_headers`](public/_headers),
+the `web-*` targets in the root `Makefile` — but **nothing is deployed**. There
+is no Cloudflare account, no domain and no credential anywhere in this
+repository. [`docs/DEPLOY.md`](../docs/DEPLOY.md) is the runbook and lists
+exactly what is missing and what could not be verified without an account.

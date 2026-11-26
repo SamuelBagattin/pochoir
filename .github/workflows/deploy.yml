@@ -1,0 +1,134 @@
+# The deploy. Manual only, and it cannot run yet.
+#
+# `workflow_dispatch` and nothing else: no push trigger, no schedule, no tag.
+# A deploy of this project is a deliberate act by a person, because what it
+# publishes is the thing the whole privacy claim rests on — the bytes a visitor
+# executes. Automating it on a merge would mean the repository, rather than the
+# maintainer, decides when that changes.
+#
+# It cannot run yet because there is no Cloudflare account, no zone and no
+# domain. `pochoir.app` is not registered. The two secrets below do not exist;
+# until they do, the `deploy` job fails at the wrangler step with an
+# authentication error and nothing is published. The `verify` job above it runs
+# fine without them, and is the useful half today.
+#
+# What a deploy does, in one sentence: build the site twice from two different
+# directories, refuse to continue unless both builds produce the same bytes,
+# assert that every script and chunk the HTML loads carries a matching
+# SHA-384, upload ./web/dist to Cloudflare Workers static assets, then fetch
+# what is actually being served and compare it against the manifest.
+#
+# Every third-party action is pinned to a full commit SHA.
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "deploy" to confirm publishing to production'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  # ADR-0004 Decision 4 items 1 and 2: build twice, compare, and gate the
+  # deploy on the comparison. A release that cannot reproduce itself does not
+  # ship. This job needs no credentials and is worth running on its own.
+  verify:
+    name: reproduce and attest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse an unconfirmed run
+        if: inputs.confirm != 'deploy'
+        run: |
+          echo "::error::type 'deploy' in the confirm input to publish"
+          exit 1
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install pinned Node toolchain
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: web/.node-version
+
+      - name: Enable corepack and the pinned pnpm
+        run: |
+          corepack enable
+          corepack prepare --activate
+        working-directory: web
+
+      # Builds the site twice, from two different absolute paths, and fails on
+      # any disagreement. Also fails if the output names its own checkout.
+      - name: make web-reproduce
+        run: make web-reproduce
+
+      # Rebuilds, attests and asserts the attestation is complete. The
+      # `_headers` file ships `Integrity-Policy: blocked-destinations=(script)`,
+      # so an unattested bundle is a blank page in production; this is the step
+      # that makes that impossible to deploy by accident.
+      - name: make web-deploy-check
+        run: make web-deploy-check
+
+      - name: Upload the manifest and the built site
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: pochoir-web-dist
+          path: web/dist
+          if-no-files-found: error
+
+  deploy:
+    name: publish
+    needs: verify
+    runs-on: ubuntu-latest
+    # A GitHub environment is where a required reviewer is configured. Create
+    # it before the first real deploy; until then this names an environment
+    # that does not exist, which is harmless on a workflow nobody can trigger
+    # into a successful run.
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install pinned Node toolchain
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: web/.node-version
+
+      - name: Enable corepack and the pinned pnpm
+        run: |
+          corepack enable
+          corepack prepare --activate
+        working-directory: web
+
+      # Rebuilt here rather than downloaded, so that what is uploaded is what
+      # this commit produces and not an artifact that passed through a store.
+      # It is the third build of the same bytes; `verify` has already proved
+      # that number is stable.
+      - name: make web-build
+        run: make web-build
+
+      - name: Publish to Cloudflare Workers static assets
+        # No account id in this repository. Both values come from repository
+        # secrets that do not exist yet; see docs/DEPLOY.md for the exact
+        # token scope to create.
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          WRANGLER_SEND_METRICS: 'false'
+        run: make web-deploy
+
+      # ADR-0004 Decision 4 item 6: the only step that can catch a deploy which
+      # did not come from CI. It must run against the production origin, after
+      # the upload, and it is the step most likely to be dropped because it is
+      # the only one that touches the network after a green build.
+      - name: Verify what is actually served
+        env:
+          POCHOIR_ORIGIN: ${{ vars.POCHOIR_ORIGIN }}
+        run: make web-verify-live ORIGIN="$POCHOIR_ORIGIN"

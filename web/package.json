@@ -3,6 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@10.20.0",
   "license": "AGPL-3.0-or-later",
   "scripts": {
     "dev": "astro dev",

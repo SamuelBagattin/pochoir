@@ -42,6 +42,37 @@ jobs:
           rustup show
           cargo --version
 
+      # Node and pnpm for the web application. The Node version lives in
+      # web/.node-version and nowhere else, the way rust-toolchain.toml owns
+      # the Rust version; `packageManager` in web/package.json pins pnpm.
+      #
+      # corepack is enabled AFTER setup-node, against the Node that will
+      # actually run the build, and the pnpm store is cached explicitly rather
+      # than through setup-node's `cache: pnpm` — that option has to resolve
+      # pnpm before corepack has provided it, and the ordering is easy to get
+      # subtly wrong in a way that silently disables the cache.
+      - name: Install pinned Node toolchain
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: web/.node-version
+
+      - name: Enable corepack and the pinned pnpm
+        id: pnpm
+        run: |
+          corepack enable
+          corepack prepare --activate
+          pnpm --version
+          echo "store=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+        working-directory: web
+
+      - name: Cache the pnpm store
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.pnpm.outputs.store }}
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('web/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
+
       - name: Cache cargo registry and build output
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
