@@ -1,4 +1,4 @@
-# Orchestrator state — filigrane
+# Orchestrator state — Pochoir
 
 Maintained by the orchestrating session. Updated after every meaningful event.
 Last updated: 2026-11-26.
@@ -62,10 +62,9 @@ large scanned PDFs are a WASM memory risk; SEO against a gouv.fr domain is hard;
   verified against GitHub, not just locally.
 - Sessions still must not push and must not open PRs. They commit to their branch; I merge and
   push.
-- **Not renamed yet, on purpose:** the folder is still `~/dev/samuelbagattin/filigrane` and the
-  crates are still `filigrane-core` / `filigrane-cli`. The rename is folded into the first
-  implementation session so it lands as one clean commit instead of churn across live branches.
-  `adr-design` has been told to write "Pochoir" in ADR prose while citing the existing identifiers.
+- **Crates renamed 2026-11-26:** they are now `pochoir-core` / `pochoir-cli`, the CLI binary is
+  `pochoir`, and the ADRs cite those identifiers. **The folder is still
+  `~/dev/samuelbagattin/filigrane` and stays that way** — historical, deliberate, not to be renamed.
 
 ## Live sub-sessions
 
@@ -302,9 +301,8 @@ Also accepted from the session's feedback, to be briefed with the first implemen
 
 ## Backlog (not yet briefed)
 
-- **Rename `filigrane-*` → `pochoir-*`** (crates, `CLAUDE.md`, doc comments, workspace metadata,
-  and the `repository` field now that a remote exists). Folded into the first implementation
-  session, not a session of its own.
+- ~~**Rename `filigrane-*` → `pochoir-*`**~~ — done 2026-11-26 in the `licence-rename` session,
+  together with the licensing decision and the per-crate dependency guard.
 - `pochoir-core` MVP: image in → watermarked PDF out, golden-image tests, CLI.
 - WASM bindings + Astro UI with live preview.
 - Metadata stripping.

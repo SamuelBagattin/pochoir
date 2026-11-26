@@ -1,7 +1,7 @@
 [package]
-name = "filigrane-cli"
+name = "pochoir-cli"
 version = "0.1.0"
-description = "Command-line front end for the filigrane watermarking engine."
+description = "Command-line front end for the Pochoir watermarking engine."
 edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
@@ -9,9 +9,9 @@ license.workspace = true
 repository.workspace = true
 
 [[bin]]
-name = "filigrane"
+name = "pochoir"
 path = "src/main.rs"
 
 # Only the workspace core. No argument parser, no error crate: see CLAUDE.md.
 [dependencies]
-filigrane-core = { path = "../filigrane-core" }
+pochoir-core = { path = "../pochoir-core" }

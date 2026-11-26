@@ -1,4 +1,4 @@
-//! Command-line front end for the `filigrane` engine.
+//! Command-line front end for the `pochoir` engine.
 //!
 //! Arguments are read by hand from [`std::env::args`]. There is deliberately no
 //! argument-parsing crate: the surface is small enough to own outright, and
@@ -9,10 +9,10 @@
 use std::process::ExitCode;
 
 const USAGE: &str = "\
-filigrane - watermark documents locally, without uploading anything.
+pochoir - watermark documents locally, without uploading anything.
 
 Usage:
-  filigrane [options]
+  pochoir [options]
 
 Options:
   -V, --version    Print the core engine version and exit.
@@ -31,7 +31,7 @@ fn main() -> ExitCode {
             // has to be accepted, not acted on.
             "-V" | "--version" => {}
             other => {
-                eprintln!("filigrane: unrecognised argument `{other}`\n");
+                eprintln!("pochoir: unrecognised argument `{other}`\n");
                 eprintln!("{USAGE}");
                 return ExitCode::from(2);
             }
@@ -43,6 +43,6 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    println!("filigrane-core {}", filigrane_core::version());
+    println!("pochoir-core {}", pochoir_core::version());
     ExitCode::SUCCESS
 }

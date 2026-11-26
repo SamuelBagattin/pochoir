@@ -2,7 +2,7 @@
 # Keep every target here; never put build logic only in a CI workflow.
 
 .DEFAULT_GOAL := help
-.PHONY: help fmt fmt-check lint test build wasm deps-check check clean
+.PHONY: help fmt fmt-check lint test build wasm deps-check deps-update check clean
 
 WASM_TARGET := wasm32-unknown-unknown
 
@@ -26,10 +26,13 @@ build: ## Build the workspace for the host
 	cargo build --workspace
 
 wasm: ## Build the core engine for the browser target
-	cargo build -p filigrane-core --target $(WASM_TARGET) --release
+	cargo build -p pochoir-core --target $(WASM_TARGET) --release
 
-deps-check: ## Fail if Cargo.lock grew a third-party dependency
+deps-check: ## Fail if a crate grew a dependency outside its allowlist
 	./scripts/check-deps.sh
+
+deps-update: ## Regenerate the per-crate dependency allowlists by measurement
+	./scripts/check-deps.sh --update $(if $(CRATE),$(CRATE),--all)
 
 check: fmt-check lint test wasm deps-check ## Everything CI runs
 	@printf '\nAll checks passed.\n'

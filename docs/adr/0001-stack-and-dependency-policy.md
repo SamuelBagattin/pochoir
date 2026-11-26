@@ -1,6 +1,6 @@
 # ADR-0001: Stack and dependency policy
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-26
 - **Deciders:** Samuel Bagattin
 - **Supersedes:** none
@@ -38,17 +38,17 @@ These are decided and this ADR records rather than re-opens them:
 ### A note on names
 
 The product is **Pochoir**, at `pochoir.app`, and the repository is public at
-<https://github.com/SamuelBagattin/pochoir>. ADR prose uses that name.
+<https://github.com/SamuelBagattin/pochoir>. The workspace crates are
+`pochoir-core` and `pochoir-cli`; the CLI binary is `pochoir`.
 
-**Code identifiers do not match it yet, deliberately.** The workspace crates are
-`filigrane-core` and `filigrane-cli` as they exist today, and the rename is being
-folded into the first implementation session so that it lands as one commit
-rather than as churn across live branches. So wherever these ADRs cite a crate,
-a path or a CI target, the identifier is written as it is on `main` today, not as
-it will read after the rename. Where "filigrane" appears as the ordinary French
-word for a watermark, or as part of **Filigrane Facile** — the government service
-this project exists to improve on — it stays, because that is still the thing we
-produce and still what users search for.
+**This section previously recorded the opposite**: that the code identifiers
+still read `filigrane-*`, and that the rename was deliberately deferred so it
+would land as one commit rather than as churn across live branches. It landed on
+2026-11-26, so the identifiers cited throughout these ADRs are now the ones in
+the tree. Where "filigrane" still appears it is deliberate — the ordinary French
+word for a watermark, **Filigrane Facile** (the government service this project
+exists to improve on), or a third-party repository name — and none of it is a
+leftover.
 
 ## Part 1 — The stack
 
@@ -424,7 +424,7 @@ configuration we would not use. That is precisely the failure mode this
 paragraph warns about. The second number is large enough that
 the global count stops being a useful guard, which is why
 [ADR-0003](0003-pdf-input-rasterisation.md) recommends the check become
-**per-crate**: a hard assertion that `filigrane-core`'s dependency closure stays
+**per-crate**: a hard assertion that `pochoir-core`'s dependency closure stays
 inside an explicit allowlist, with the global count kept only as a blunt alarm.
 
 ## Decision

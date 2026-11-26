@@ -76,6 +76,6 @@ un-accept an ADR. We supersede it.
 
 | ADR | Title | Status |
 | --- | --- | --- |
-| [0001](0001-stack-and-dependency-policy.md) | Stack and dependency policy | Proposed |
-| [0002](0002-watermark-algorithm-and-quality-modes.md) | Watermark algorithm and output quality modes | Proposed |
-| [0003](0003-pdf-input-rasterisation.md) | PDF input rasterisation | Proposed |
+| [0001](0001-stack-and-dependency-policy.md) | Stack and dependency policy | Accepted |
+| [0002](0002-watermark-algorithm-and-quality-modes.md) | Watermark algorithm and output quality modes | Accepted |
+| [0003](0003-pdf-input-rasterisation.md) | PDF input rasterisation | Accepted |

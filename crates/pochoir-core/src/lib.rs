@@ -1,9 +1,9 @@
-//! Core engine for `filigrane`: local-only document watermarking.
+//! Core engine for `pochoir`: local-only document watermarking.
 //!
 //! Everything in this crate must compile for `wasm32-unknown-unknown`, because
 //! the browser build is the primary target and the native CLI is the same code
 //! reused. That rules out `std::fs`, `std::time`, threads and sockets here:
-//! I/O belongs to the callers (`filigrane-cli`, the wasm bindings).
+//! I/O belongs to the callers (`pochoir-cli`, the wasm bindings).
 //!
 //! This crate has zero third-party dependencies. Keep it that way.
 
@@ -58,7 +58,7 @@ pub type Result<T> = core::result::Result<T, Error>;
 /// exactly which engine produced a given output file.
 ///
 /// ```
-/// let v = filigrane_core::version();
+/// let v = pochoir_core::version();
 /// assert_eq!(v.split('.').count(), 3, "expected a semver triple, got {v:?}");
 /// ```
 #[must_use]
