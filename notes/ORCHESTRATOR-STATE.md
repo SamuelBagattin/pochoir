@@ -39,8 +39,14 @@ path gets built and verified up to a dry run, and nobody presses the button.
    (`local_d59cc1e8-b67d-4dc1-846b-60dedb26a3f7`). Owns `web/**`, `.github/**`, new `Makefile`
    targets; told explicitly not to touch the `wasm` target, `crates/**` or the dependency guard,
    and **not to deploy or handle a credential**.
-5. **Integration** — not briefed, cannot start until 3 lands: swap the stub for the real module,
-   teach the browser to read the error detail string, and whatever the bindings report opens.
+5. **Integration** — goes to the **`web-ui` session**, which is alive, holds the context and has
+   been told to stand by: swap the stub for the real module, wire the seven status codes to
+   French wording, delete whatever quality modes have no engine behind them. It is at 340k of 1M,
+   past the 300k rotation mark; kept deliberately because integration is bounded and re-learning
+   the island mounting, the CSP constraint and the worker protocol would cost more than the
+   rotation saves. Watch it; rotate if it nears 600k. Meanwhile it is drafting the French wording
+   for all eight statuses and the integration checklist into the shared notes folder — useful
+   work that touches no file `deploy-plumbing` owns.
 
 Then: **tell Samuel the moment the MVP is genuinely usable.** He has said not to register
 `pochoir.app` yet, so the trigger is now "tell him", not "tell him so he can buy it".
@@ -439,9 +445,30 @@ And `web/` is merged with **no Makefile target and no CI coverage**, which is th
    result always sets width and height to 0 — so that becomes a documented invariant with a test,
    not an accident. I will not add a field whose value is already carried.
 3. **`pochoir_alloc` returns 0 on failure**, and `alloc(0)` returning 0 is not a failure.
-4. **On a non-OK status, `ptr`/`len` carry a UTF-8 detail string.** No new export, and it is the
+4. **On a non-OK status, `ptr`/`len` carry a UTF-8 payload.** No new export, and it is the
    difference between "the input format is not supported" and naming the character the font
    subset cannot draw — which is the error a French user actually hits.
+
+**Corrected within the hour, by the UI session, and it was right.** I had specified that payload
+as "human-readable specifics". Wrong: this interface is French, and an English sentence produced
+in Rust is a string the browser can neither show nor translate. The payload is **data the UI
+interpolates into its own wording, never a sentence** — the offending characters themselves,
+concatenated, all of them rather than the first, no prose and no `U+` notation, and no payload at
+all when there is nothing to name. Sixth time a session has corrected me.
+
+**Two status codes added on its proposal, and these numbers are now fixed:**
+
+    0 OK · 1 BAD_ARGUMENT · 2 DECODE_FAILED · 3 UNSUPPORTED_FORMAT · 4 OUT_OF_MEMORY
+    5 INTERNAL · 6 TEXT_DOES_NOT_FIT (MarkDoesNotFit) · 7 UNSUPPORTED_CHARACTER
+
+The old set collapsed both of ADR-0007's named refusals into one bucket. ADR-0007 Decision 6 asks
+the engine to name *every* unsupported character precisely because its caller is the web UI, and
+until now the ABI could not carry the answer at all. The browser's reader is already merged and
+is bounds-checked — non-zero ptr and len, 4096-byte cap, range checked against current memory,
+strict UTF-8 — so an absent, oversized or malformed payload degrades to no detail, not a crash.
+
+**ADR numbers: 0008 is the wasm ABI (bindings session), 0009 is deploy/CI if needed.** I had
+handed 0008 to both sessions and corrected it.
 
 ### A reported bug that was not ours
 
