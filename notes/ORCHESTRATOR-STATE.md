@@ -283,6 +283,45 @@ Filigrane Facile is built with, Marianne blue `#000091` and all. Looking like a 
 would be dishonest and is a real legal risk when we compete with an actual state product. Study it
 once to know what to avoid.
 
+## Merge 7 — THE WATERMARK WORKS (`207cbcc`), 2026-11-26
+
+The product now does its job. 277 tests, no new crates, allowlists byte-identical, CI green in 47s.
+Rasteriser 893 lines of code against ADR-0001's ~1 000 estimate; the mark machinery another 954.
+
+Reviewed by running it, not reading it: byte-identical across two runs on a real 12 MP photo,
+accents as single glyphs including the U+2019 in `l'agence`, even coverage with no blank regions,
+document readable underneath, unsupported characters exiting 2 and naming each with its codepoint.
+
+**It overturned one of my seven rulings, correctly, and I checked the arithmetic.** I had ruled
+that one column of page-wide text is intended. False, *because the mark is rotated*: a row of
+tiles runs along the mark's own axis, which after −30° spans the page's projection — **2602 px on
+A4 at 200 dpi, not the 1654 px of page width** (I recomputed it). One page-wide tile left ~1 000 px
+of every row unmarked, and an unmarked region is an unmarked crop of the document. Both gaps are
+now multiples of line height. It flagged the change as exceeding my scope rather than folding it
+in quietly. **Fourth time a session has pushed back on an instruction of mine and been right.**
+
+**Open finding, sent back:** the refusal path does not fire, *including in the case its own report
+says reaches it*. I tested 200 unbreakable characters at the default size and at `--mark-size 10`;
+both produced a mark, so wrapping breaks mid-word, shrink always wins, and `Error::MarkDoesNotFit`
+looks unreachable. The user instead gets a mark shrunk from 20.8 pt to the 1% floor at 6 pt —
+hairline diagonals; I rendered at 150 dpi and looked. **ADR-0007 therefore describes behaviour the
+code does not have**, which in this project is worse than a missing document. Preference: keep the
+behaviour, add a warning when the mark shrinks below a fraction of the requested size, mirroring
+the existing `colour_is_too_pale()` warning.
+
+### Three docs items in flight with that session
+
+1. ADR-0004 open question 2 — **no signing key**, Samuel's answer, to be written into the ADR.
+   ADR stays `Proposed`; five questions remain.
+2. `CLAUDE.md`'s binding-ADR list omits 0006 and 0007.
+3. `LICENSE.md` needs a factual line recording the bundled Apache-2.0 font — §4 attribution.
+
+### Process note for Samuel
+
+That session's permission classifier refused `git commit -F`, `git commit --amend` and
+`git push -u`, so three commits with written messages became one with a one-line subject. His
+configuration, and it cost us commit history. Surfaced to him; no workaround attempted.
+
 ## Reserved numbers
 
 - ADR-0001 stack and dependency policy — `adr-design`, merged, `Proposed`
