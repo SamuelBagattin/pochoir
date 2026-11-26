@@ -2,11 +2,15 @@
 # Keep every target here; never put build logic only in a CI workflow.
 
 .DEFAULT_GOAL := help
-.PHONY: help fmt fmt-check lint test build wasm deps-check deps-update font-subset nfc-table check clean \
+.PHONY: help fmt fmt-check lint test build wasm wasm-repro deps-check deps-update \
+        font-subset nfc-table check clean \
         web-install web-build web-check web-serve web-reproduce web-deploy-check \
         web-engine web-deploy web-verify-live web-clean
 
 WASM_TARGET := wasm32-unknown-unknown
+WASM_ARTEFACT := target/$(WASM_TARGET)/release/pochoir_wasm.wasm
+# `$(CARGO_HOME)` is not exported by default; rustup's own default is ~/.cargo.
+CARGO_HOME_DIR := $(if $(CARGO_HOME),$(CARGO_HOME),$(HOME)/.cargo)
 
 # `--frozen-lockfile` everywhere, including on a laptop: the lock file is
 # committed and a build that silently resolves something else is not the build
@@ -42,8 +46,28 @@ test: ## Run unit tests and doc tests across the workspace
 build: ## Build the workspace for the host
 	cargo build --workspace
 
-wasm: ## Build the core engine for the browser target
-	cargo build -p pochoir-core --target $(WASM_TARGET) --release
+wasm: ## Build the browser engine: crates/pochoir-wasm -> pochoir_wasm.wasm
+	# `pochoir-wasm` is the artefact the browser loads; `pochoir-core` on its own
+	# exports nothing but `memory`. Building this crate compiles the core for
+	# wasm32 as a dependency, so the "core must keep compiling for wasm32"
+	# guarantee is still checked by this target.
+	#
+	# `--locked` is ADR-0004 Decision 1, constraint 2: a release build must never
+	# resolve a dependency the lock file does not name.
+	#
+	# `--remap-path-scope=object` plus the two `--remap-path-prefix` entries are
+	# that decision's measured remedy. Without them the module carries
+	# `core::panic::Location` strings naming the builder's home directory and
+	# their crates.io registry, in the data section where `strip` does not reach.
+	# Cargo excludes `--remap-path-prefix` from the metadata hash on purpose, so
+	# two checkouts at different paths still agree byte for byte. Measured rather
+	# than assumed: `make wasm-repro`.
+	RUSTFLAGS="--remap-path-scope=object --remap-path-prefix=$(CURDIR)=/pochoir --remap-path-prefix=$(CARGO_HOME_DIR)/registry/src=/registry" \
+	  cargo build -p pochoir-wasm --target $(WASM_TARGET) --release --locked
+	@printf '\nwasm: %s\n' "$$(wc -c <'$(WASM_ARTEFACT)' | tr -d ' ') bytes, $(WASM_ARTEFACT)"
+
+wasm-repro: ## Prove `make wasm` reproducible: build twice from two paths
+	./scripts/check-repro.sh
 
 deps-check: ## Fail if a crate grew a dependency outside its allowlist
 	./scripts/check-deps.sh

@@ -1,5 +1,7 @@
 import { packOptions, type MarkOptions } from './options';
 import {
+  EngineError,
+  EngineFault,
   errorForStatus,
   STATUS,
   type PochoirModule,
@@ -94,8 +96,8 @@ export class WasmModule implements PochoirModule {
     options: MarkOptions,
     maxPx: number,
   ): Promise<PreviewBitmap> {
-    return this.call(image, text, options, (i, t, o) =>
-      this.ex.pochoir_render_preview(i.ptr, i.len, t.ptr, t.len, o.ptr, o.len, maxPx),
+    return this.call(image, text, options, (ip, il, tp, tl, op, ol) =>
+      this.ex.pochoir_render_preview(ip, il, tp, tl, op, ol, maxPx),
     ) as Promise<PreviewBitmap>;
   }
 
@@ -104,8 +106,8 @@ export class WasmModule implements PochoirModule {
     text: string,
     options: MarkOptions,
   ): Promise<Uint8Array> {
-    const out = await this.call(image, text, options, (i, t, o) =>
-      this.ex.pochoir_render_pdf(i.ptr, i.len, t.ptr, t.len, o.ptr, o.len),
+    const out = await this.call(image, text, options, (ip, il, tp, tl, op, ol) =>
+      this.ex.pochoir_render_pdf(ip, il, tp, tl, op, ol),
     );
     return (out as { bytes: Uint8Array }).bytes;
   }
@@ -115,17 +117,29 @@ export class WasmModule implements PochoirModule {
     text: string,
     options: MarkOptions,
     invoke: (
-      img: Span,
-      txt: Span,
-      opts: Span,
+      imgPtr: number,
+      imgLen: number,
+      textPtr: number,
+      textLen: number,
+      optsPtr: number,
+      optsLen: number,
     ) => number,
   ): Promise<PreviewBitmap | { bytes: Uint8Array }> {
-    const img = this.copyIn(image);
-    const txt = this.copyIn(new TextEncoder().encode(text));
-    const opts = this.copyIn(packOptions(options));
+    // Packed before the boundary is crossed, so that a rejected option is an
+    // ordinary argument error and not mistaken for a fault.
+    const packed = packOptions(options);
+    const encoded = new TextEncoder().encode(text);
+
+    let img: Span | null = null;
+    let txt: Span | null = null;
+    let opts: Span | null = null;
     let handle = 0;
     try {
-      handle = invoke(img, txt, opts);
+      img = this.copyIn(image);
+      txt = this.copyIn(encoded);
+      opts = this.copyIn(packed);
+
+      handle = invoke(img.ptr, img.len, txt.ptr, txt.len, opts.ptr, opts.len);
       const status = this.ex.pochoir_result_status(handle);
       if (status !== STATUS.OK) throw errorForStatus(status, this.detailOf(handle));
 
@@ -140,11 +154,23 @@ export class WasmModule implements PochoirModule {
       return width > 0 && height > 0
         ? { pixels: new Uint8ClampedArray(bytes.buffer), width, height }
         : { bytes };
+    } catch (error) {
+      // An EngineError is a status that came back cleanly; anything else
+      // thrown between here and the module is the module misbehaving.
+      if (error instanceof EngineError) throw error;
+      throw new EngineFault(error);
     } finally {
-      if (handle !== 0) this.ex.pochoir_result_free(handle);
-      this.release(opts);
-      this.release(txt);
-      this.release(img);
+      // A trapped instance traps again on every call, so the cleanup must not
+      // be able to throw over the original error. Leaking a handle in a worker
+      // that is about to be discarded costs nothing.
+      try {
+        if (handle !== 0) this.ex.pochoir_result_free(handle);
+        if (opts) this.release(opts);
+        if (txt) this.release(txt);
+        if (img) this.release(img);
+      } catch {
+        /* the instance is already gone; the worker goes with it */
+      }
     }
   }
 

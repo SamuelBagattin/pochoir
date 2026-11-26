@@ -1,0 +1,11 @@
+adler2
+bitflags
+cfg-if
+crc32fast
+fdeflate
+flate2
+miniz_oxide
+png
+simd-adler32
+zune-core
+zune-jpeg

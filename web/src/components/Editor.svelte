@@ -34,6 +34,10 @@
   const client = new EngineClient();
   let debounce: ReturnType<typeof setTimeout> | null = null;
   let generation = 0;
+  /** A preview is running. The engine is synchronous: a second one would queue. */
+  let inFlight = false;
+  /** Something changed while one was running; render again when it finishes. */
+  let restartWanted = false;
 
   const mark = $derived(normaliseMarkText(rawText));
   const remaining = $derived(LIMITS.textMaxChars - mark.text.length);
@@ -58,7 +62,7 @@
     bitmap = null;
     const bytes = new Uint8Array(await chosen.arrayBuffer());
     client.setImage(bytes);
-    render();
+    requestRender();
   }
 
   function clearFile(): void {
@@ -66,18 +70,45 @@
     bitmap = null;
     problem = null;
     announcement = '';
+    restartWanted = false;
+    if (debounce) clearTimeout(debounce);
     client.terminate(new ClientError('internal', 'document removed'));
   }
 
   function scheduleRender(): void {
     if (!file) return;
     if (debounce) clearTimeout(debounce);
-    debounce = setTimeout(render, DEBOUNCE_MS);
+    debounce = setTimeout(requestRender, DEBOUNCE_MS);
+  }
+
+  /**
+   * Latest wins: at most one preview in flight, and at most one more waiting.
+   *
+   * The debounce alone is not enough and a longer one is not the fix. The
+   * engine call is synchronous, so while a render runs the worker cannot pick
+   * up a newer request — anything sent meanwhile queues behind it and runs to
+   * completion whether or not its result still matters. Dragging a slider
+   * with pauses in it would leave the preview catching up long after the drag
+   * stopped. A debounce long enough to prevent that is long enough to feel
+   * broken.
+   *
+   * There is no parameter slot to keep because the parameters *are* the
+   * component's state, read at call time, so the newest render is always the
+   * one that runs next. The flag is all the slot that needs.
+   */
+  function requestRender(): void {
+    if (!file) return;
+    if (inFlight) {
+      restartWanted = true;
+      return;
+    }
+    void render();
   }
 
   async function render(): Promise<void> {
     if (!file) return;
     const mine = ++generation;
+    inFlight = true;
     busy = true;
     announcement = '';
     try {
@@ -91,7 +122,15 @@
       problem = messageFor(error);
       announcement = problem;
     } finally {
-      if (mine === generation) busy = false;
+      inFlight = false;
+      if (restartWanted && file) {
+        // Straight into the next one, without dropping `busy` in between:
+        // the status line should not flicker to 'à jour' mid-drag.
+        restartWanted = false;
+        void render();
+      } else if (mine === generation) {
+        busy = false;
+      }
     }
   }
 

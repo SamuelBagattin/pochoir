@@ -1,6 +1,10 @@
 [workspace]
 resolver = "3"
-members = ["crates/pochoir-core", "crates/pochoir-cli"]
+# `pochoir-wasm` must be listed here. ADR-0004 Decision 1, constraint 1: a path
+# dependency on `pochoir-core` from a crate outside this workspace root puts an
+# absolute path into `-Cmetadata`, which renames every symbol and destroys build
+# reproducibility with nothing in the output to say so.
+members = ["crates/pochoir-core", "crates/pochoir-cli", "crates/pochoir-wasm"]
 
 # Shared metadata. Both crates inherit these with `field.workspace = true`.
 [workspace.package]
