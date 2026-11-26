@@ -1,0 +1,32 @@
+[package]
+name = "pochoir-wasm"
+version = "0.1.0"
+description = "Hand-written C-style WebAssembly ABI over the Pochoir engine."
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# `cdylib` is the browser artefact; `lib` is there so `cargo test` can link the
+# crate and so the marshalling layer is testable on the host.
+[lib]
+crate-type = ["lib", "cdylib"]
+
+# Only the workspace core. No `wasm-bindgen`, no `js-sys`, no allocator crate:
+# the ABI is ten `extern "C"` functions over linear memory, written by hand.
+#
+# ADR-0004 Decision 1, constraint 1: this crate MUST be a member of the root
+# workspace. A path dependency on `pochoir-core` from outside the workspace root
+# puts an absolute path into `-Cmetadata`, which renames every symbol and
+# destroys reproducibility with nothing in the output to say so.
+[dependencies]
+pochoir-core = { path = "../pochoir-core" }
+
+# `png` is used by the tests only, to build a PNG fixture with real
+# transparency so the preview's alpha-weighted downscale is exercised against an
+# independent encoder rather than our own. `cargo tree --edges normal` excludes
+# dev-dependencies, so this changes no allowlist, and `png` is already in the
+# lock file, so it changes no count. Verified by `make deps-check`, not assumed.
+[dev-dependencies]
+png = { version = "0.18.1", default-features = false }
