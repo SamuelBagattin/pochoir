@@ -59,11 +59,33 @@ large scanned PDFs are a WASM memory risk; SEO against a gouv.fr domain is hard;
 
 | name | id | owns | state |
 |---|---|---|---|
-| `scaffold` | `local_ae46d0e2-325d-4ddb-82b6-544820645fe1` | `.gitignore`, `rust-toolchain.toml`, workspace `Cargo.toml`, `crates/*` stubs, `Makefile`, `scripts/check-deps.sh`, `.github/workflows/ci.yml`, root `CLAUDE.md`, `notes/README.md` | running |
+| `scaffold` | `local_ae46d0e2-325d-4ddb-82b6-544820645fe1` | build skeleton | **merged into `main` as `ea30fcd`** |
 | `adr-design` | `local_b703f80a-cb41-408f-9087-ec847b630de1` | `docs/adr/` only — design-only, must not write code | running |
 
 File ownership is disjoint by design: `scaffold` must not touch `docs/`, `adr-design` must not
 touch anything outside `docs/adr/`.
+
+### Merge 1 review — `claude/scaffold-8112ff` → `main`, 2026-11-26
+
+Reviewed the diff myself rather than trusting the report. 13 files, 417 lines added.
+What I verified independently:
+
+- Both pinned GitHub Action SHAs re-resolved against the GitHub API and match their stated tags
+  (`actions/checkout` v7.0.1 = `3d3c42e…`, `actions/cache` v6.1.0 = `55cc834…`).
+- No attribution trailers in any of the five commits (the only `claude` matches are the
+  `CLAUDE.md` filename and the `/.claude/` ignore rule — both legitimate).
+- `make check` passes on *merged* `main`, not just on the branch: zero warnings, 3 unit tests,
+  1 doc test, wasm target builds, deps-check OK at 2/2.
+- `cargo tree --workspace` shows only the two workspace crates.
+- The CLI exit codes behave as reported (0 for no args / `-V` / `-h`, 2 for an unknown argument).
+- Rust 1.97.0 is real, installed, and the pin resolves to it (`rustc 1.97.0 (2d8144b78 2026-07-07)`).
+- The release wasm is 43 bytes — correct for a `cdylib` with nothing exported yet, not a broken
+  build.
+
+Quality notes: `#![forbid(unsafe_code)]` on both crates, `#![deny(missing_docs)]` on the core,
+`core::` rather than `std::` throughout the core, hand-rolled `#[non_exhaustive]` error enum with
+`Display` + `core::error::Error`. `check-deps.sh` is POSIX, `set -eu`, and its failure message
+names the ADR requirement.
 
 ## Reserved numbers
 
@@ -74,8 +96,10 @@ touch anything outside `docs/adr/`.
 
 ## Merge queue
 
-1. `scaffold` branch → `main` (nothing depends on it yet, merge first: it creates the workspace).
-2. `adr-design` branch → `main` (docs only, no semantic conflict with 1).
+1. ~~`scaffold` → `main`~~ — merged as `ea30fcd`, `make check` green on main.
+2. `adr-design` → `main` (docs only; based on `e8428a1`, touches only `docs/adr/`, so it will
+   merge clean over `ea30fcd`). Waiting on the session, then on Samuel's approval of the ADRs
+   before any implementation session starts.
 
 ## Research held at orchestrator level
 
@@ -124,6 +148,20 @@ the one unavoidable dependency and goes behind a trait plus a lazily-loaded modu
 1. Public product name and domain (`filigrane` belongs to the government service).
 2. Public or private GitHub repo under `samuelbagattin`, and when to create the remote.
 3. Licence — `adr-design` will recommend one in ADR-0001; the choice is his.
+
+## Carried forward from merge 1
+
+- **`[profile.release]` sets `panic = "abort"`** (alongside `opt-level = "z"`, `lto`,
+  `codegen-units = 1`, `strip`). The scaffold session chose this for wasm size and flagged it
+  itself. It is a real design decision: with `abort`, a panic traps the wasm instance and it has
+  to be recreated rather than recovered from, and `cargo test --release` cannot run
+  `should_panic` tests. It fits the "one terminable Web Worker" design, but it needs ADR
+  coverage rather than sitting in a profile block. Forwarded to `adr-design`.
+- **CI `on: push` has no branch filter**, so a pushed branch that also has a PR runs the job
+  twice (the concurrency group keys on `github.ref`, which differs between the two events).
+  Harmless today — no remote — but fold `branches: [main]` into the next CI change.
+- `crate-type = ["lib", "cdylib"]` on the core, `resolver = "3"`, and the CLI's exit code 2 for a
+  bad argument were all the session's calls, all reasonable, none worth reversing.
 
 ## Backlog (not yet briefed)
 
