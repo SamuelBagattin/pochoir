@@ -136,17 +136,44 @@ export const fr = {
     title: 'Une erreur est survenue',
 
     /**
-     * Status 1, BadArgument. The engine groups two things here: a parameter
-     * out of range, and a mark the font cannot draw. No control can produce
-     * the first, and the engine sends no payload naming the second, so this
-     * message has to cover both while pointing at the only cause a user can
-     * actually hit. Measured: every realistic French input is accepted —
-     * accents, É À Î Ô Ç, œ, €, « », the narrow no-break space, the em dash,
-     * the ellipsis, and decomposed NFD input — and emoji and non-Latin
-     * alphabets are refused.
+     * Status 1, BadArgument. A parameter out of range — the payload names it,
+     * `dpi` for instance. No control can produce one, so if a user ever sees
+     * this the interface sent something it had no business sending, and the
+     * sentence says so rather than implying they did something wrong. A mark
+     * the font cannot draw has its own status and is not this.
      */
     refused:
-      'Le moteur a refusé ce filigrane. Les emoji et les alphabets non latins ne sont pas pris en charge par la police de Pochoir : s’il y en a dans votre texte, retirez-les.',
+      'Le moteur a refusé un réglage envoyé par l’interface. C’est un défaut de notre côté, pas un problème avec votre document. Rechargez la page et réessayez.',
+
+    /**
+     * Status 6, TextDoesNotFit. ADR-0007 Decision 2 wraps, then shrinks to the
+     * 1 % floor, then refuses — so this is reached by text that cannot be
+     * *broken*, not by text that is merely long. Saying "trop long" would send
+     * someone to delete words when the fix is a space.
+     */
+    textDoesNotFit:
+      'Ce texte ne peut pas être découpé en lignes assez courtes pour tenir sur la page, même à la plus petite taille. Ajoutez des espaces, ou raccourcissez-le.',
+
+    /**
+     * Status 7, UnsupportedCharacter, with the characters named. The article,
+     * the verb and the pronoun all agree, so the plural is a second sentence
+     * rather than an `(s)`. French takes the singular at n = 1 only, and
+     * n >= 1 always holds here, so two branches are correct and
+     * `Intl.PluralRules` is not needed.
+     */
+    unsupportedCharacters: (list: string, count: number) =>
+      count === 1
+        ? `Le caractère ${list} n’est pas pris en charge par la police de Pochoir. Retirez-le du texte du filigrane.`
+        : `Les caractères ${list} ne sont pas pris en charge par la police de Pochoir. Retirez-les du texte du filigrane.`,
+
+    /**
+     * Status 7 with nothing in the payload. Drops the instruction to remove
+     * "it", because without the payload we cannot say which one, and telling
+     * somebody to remove a character we decline to name is worse than
+     * describing the class.
+     */
+    unsupportedCharactersUnnamed:
+      'Le texte du filigrane contient un caractère que la police de Pochoir ne sait pas dessiner. Les emoji et les alphabets non latins ne sont pas pris en charge.',
 
     /** Status 2, DecodeFailed. */
     decode:

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { t, todayFormatted, formatNumber } from '../i18n';
+  import { t, todayFormatted, formatNumber, formatCharacterList } from '../i18n';
   import FileDrop from './FileDrop.svelte';
   import RangeField from './RangeField.svelte';
   import PreviewStage from './PreviewStage.svelte';
@@ -28,6 +28,14 @@
   let exporting = $state(false);
   let announcement = $state('');
   let problem = $state<string | null>(null);
+  /**
+   * A failure that is specifically about the mark text, shown under the
+   * textarea rather than in the export group. Statuses 6 and 7 are the only
+   * two the engine attributes to the text, and they are the two whose fix is
+   * in that field — which at 200 % zoom is not on the same screen as the
+   * export button.
+   */
+  let markProblem = $state<string | null>(null);
   let unsupported = $state(false);
 
   const client = new EngineClient();
@@ -57,6 +65,7 @@
 
   async function chooseFile(chosen: File): Promise<void> {
     problem = null;
+    markProblem = null;
     file = chosen;
     bitmap = null;
     const bytes = new Uint8Array(await chosen.arrayBuffer());
@@ -68,6 +77,7 @@
     file = null;
     bitmap = null;
     problem = null;
+    markProblem = null;
     announcement = '';
     restartWanted = false;
     if (debounce) clearTimeout(debounce);
@@ -115,11 +125,11 @@
       if (mine !== generation) return; // a newer render has already started
       bitmap = next;
       problem = null;
+      markProblem = null;
       announcement = t.preview.statusAnnounce;
     } catch (error) {
       if (mine !== generation) return;
-      problem = messageFor(error);
-      announcement = problem;
+      announcement = report(error);
     } finally {
       inFlight = false;
       if (restartWanted && file) {
@@ -137,6 +147,7 @@
     if (!file) return;
     exporting = true;
     problem = null;
+    markProblem = null;
     try {
       const pdf = await client.pdf(mark.text, $state.snapshot(options));
       const name = file.name.replace(/\.[^.]+$/, '') + t.actions.suffix + '.pdf';
@@ -154,8 +165,7 @@
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
       announcement = t.actions.downloadReady(name);
     } catch (error) {
-      problem = messageFor(error);
-      announcement = problem;
+      announcement = report(error);
     } finally {
       exporting = false;
     }
@@ -173,33 +183,59 @@
   }
 
   /**
-   * One engine status, one sentence. The mapping is deliberately flat and
-   * total rather than clever: every kind the client can produce is named, so
-   * adding one to `ClientFailureKind` is a type error here rather than a
-   * silent fall through to `generic`.
+   * Put a failure where the user can act on it, and return what to announce.
+   *
+   * The mapping is deliberately flat and total rather than clever: every kind
+   * the client can produce is named, so adding one to `ClientFailureKind` is a
+   * type error here rather than a silent fall through to `generic`.
    */
-  function messageFor(error: unknown): string {
-    if (!(error instanceof ClientError)) return t.errors.generic;
+  function report(error: unknown): string {
+    const { message, onMarkText } = describe(error);
+    if (onMarkText) {
+      markProblem = message;
+      problem = null;
+    } else {
+      problem = message;
+      markProblem = null;
+    }
+    return message;
+  }
+
+  function describe(error: unknown): { message: string; onMarkText: boolean } {
+    if (!(error instanceof ClientError)) {
+      return { message: t.errors.generic, onMarkText: false };
+    }
     switch (error.kind) {
+      case 'unsupported-character': {
+        // The payload is the offending characters themselves — data, never a
+        // sentence. The French around them is ours; the engine's is not shown.
+        if (!error.detail) {
+          return { message: t.errors.unsupportedCharactersUnnamed, onMarkText: true };
+        }
+        const { list, count } = formatCharacterList(error.detail);
+        return { message: t.errors.unsupportedCharacters(list, count), onMarkText: true };
+      }
+      case 'does-not-fit':
+        return { message: t.errors.textDoesNotFit, onMarkText: true };
       case 'argument':
-        return t.errors.refused;
+        return { message: t.errors.refused, onMarkText: false };
       case 'decode':
-        return t.errors.decode;
+        return { message: t.errors.decode, onMarkText: false };
       case 'unsupported':
-        return t.errors.unsupportedFormat;
+        return { message: t.errors.unsupportedFormat, onMarkText: false };
       case 'oom':
-        return t.errors.outOfMemory;
+        return { message: t.errors.outOfMemory, onMarkText: false };
       case 'internal':
-        return t.errors.crashed;
+        return { message: t.errors.crashed, onMarkText: false };
       case 'timeout':
-        return t.errors.timeout;
+        return { message: t.errors.timeout, onMarkText: false };
       case 'no-image':
-        return t.errors.noImage;
+        return { message: t.errors.noImage, onMarkText: false };
       case 'unsupported-browser':
         unsupported = true;
-        return t.errors.unsupportedBrowser;
+        return { message: t.errors.unsupportedBrowser, onMarkText: false };
       default:
-        return t.errors.generic;
+        return { message: t.errors.generic, onMarkText: false };
     }
   }
 
@@ -237,13 +273,21 @@
           rows="3"
           maxlength={LIMITS.textMaxChars}
           placeholder={t.mark.textPlaceholder}
-          aria-describedby="mark-text-hint"
+          aria-invalid={markProblem ? 'true' : undefined}
+          aria-describedby={markProblem ? 'mark-text-hint mark-text-error' : 'mark-text-hint'}
           bind:value={rawText}
           oninput={scheduleRender}
         ></textarea>
         <p class="field__hint" id="mark-text-hint">
           {t.mark.textHint} · {t.mark.charactersRemaining(Math.max(0, remaining))}
         </p>
+        {#if markProblem}
+          <!-- No role="alert": it is already in the textarea's
+               aria-describedby, and the preview's live region announces it
+               once. Two announcements of the same sentence is worse than
+               none. -->
+          <p class="warning-note" id="mark-text-error">{markProblem}</p>
+        {/if}
         {#if mark.truncatedLines}
           <p class="warning-note">{t.mark.tooManyLines}</p>
         {/if}
