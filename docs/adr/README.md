@@ -68,7 +68,11 @@ un-accept an ADR. We supersede it.
   for the costs, not the benefits.
 - **Mark open questions** that need the owner's decision explicitly, so they are
   findable: a dedicated section, and the ADR stays `Proposed` until they are
-  answered.
+  answered. **Closing an open question:** an open question may be closed in place
+  after acceptance — tick the box, write the answer beside it and name who
+  decided — but only when the answer does not change the decision the ADR
+  records. If it would change the decision, write a new ADR that supersedes this
+  one instead.
 - Keep it readable in a few minutes. If an ADR needs more, it is probably two
   ADRs.
 
