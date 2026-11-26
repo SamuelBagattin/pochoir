@@ -37,8 +37,12 @@
 use core::fmt;
 
 pub mod fingerprint;
+pub mod jpeg;
 pub mod page;
 pub mod pixmap;
+
+#[cfg(test)]
+pub(crate) mod test_support;
 
 pub use page::{PageGeometry, PageSource, RasterError};
 pub use pixmap::Pixmap;
