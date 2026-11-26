@@ -39,6 +39,7 @@ use core::fmt;
 pub mod fingerprint;
 pub mod jpeg;
 pub mod page;
+pub mod pdf;
 pub mod pixmap;
 
 #[cfg(test)]
