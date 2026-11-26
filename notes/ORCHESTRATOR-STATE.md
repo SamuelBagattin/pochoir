@@ -185,9 +185,23 @@ names the ADR requirement.
 
 ### Open after merge 4
 
-- **For Samuel:** at the 200 dpi default a 4 032 px phone photo makes a ~20-inch page. Faithful to
-  ADR-0002, but product direction, so his call. The `max(stated, requested)` dpi rule itself is
-  right and stays either way.
+- ~~**For Samuel:** the 20-inch page~~ — **decided 2026-11-26: cap image pages at A4, but never
+  enlarge to it.** A 600 dpi scan of an ID card at 85 x 54 mm stays that size; capping only ever
+  shrinks. PDF inputs unchanged, `max(stated, requested)` unchanged. In flight with the phase-1
+  session, along with the ADR-0002 amendment. The deciding argument, worth keeping: the bytes are
+  identical at every DPI (measured: 954 243 bytes for a 4032x3024 frame, only `/MediaBox` moving),
+  so nothing about quality was at stake — while ADR-0002 itself says the DPI knob "is meaningful
+  only for PDF inputs". We were letting a knob our own design document calls meaningless decide the
+  output's most visible physical property.
+- **Decided 2026-11-26: output stays PDF-only for now; a user-chosen output format is a later
+  feature, not current scope.** Samuel's call. The limitation is real and should not be forgotten:
+  plenty of French administrative and rental portals demand an image and reject PDFs ("format JPG,
+  2 Mo maximum"), so somebody needing a watermarked JPEG back cannot use Filigrane Facile *or*
+  Pochoir today. The mark is burned into pixels, so the PDF is only a container and handing back
+  the JPEG we already encoded is strictly less work. When it is picked up: match the input by
+  default, PDF always available explicitly, PDF forced for PDF inputs and for merges; it needs its
+  own metadata-stripping assertion, since a directly-emitted JPEG has no PDF wrapper standing
+  between the EXIF question and the user.
 - Revisit later, not now: decoder errors are reduced to `&'static str` to keep `Error: Copy`, which
   was a scaffold-era doc comment rather than an ADR requirement. Losing the decoder's message will
   cost someone a debugging session.
