@@ -21,7 +21,15 @@ export type Response =
   | { id: number; ok: false; failure: Failure };
 
 export interface Failure {
-  kind: 'decode' | 'unsupported' | 'oom' | 'argument' | 'internal' | 'no-image';
+  kind:
+    | 'decode'
+    | 'unsupported'
+    | 'oom'
+    | 'argument'
+    | 'internal'
+    | 'does-not-fit'
+    | 'unsupported-character'
+    | 'no-image';
   message: string;
   /**
    * Engine-supplied data for the interface to put into its own French
