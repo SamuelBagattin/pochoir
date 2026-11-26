@@ -470,16 +470,70 @@ mode on the rasterising path.
 
 ## Open questions
 
-- [ ] **Needs decision from Samuel:** default mark text. A placeholder that
-      suggests recipient + date + purpose teaches users what makes a mark
-      attributable, but a pre-filled field that is sent unedited is worse than an
-      empty one. Recommendation: empty field, with a non-committal placeholder
-      and one-click suggestions.
-- [ ] **Needs decision from Samuel:** whether `overlay` mode ships in v1 at all,
-      given it is the one mode that can give a user a false sense of protection.
-      Recommendation: not in v1; add it once the burn-in path is solid.
-- [ ] **Needs decision from Samuel:** whether the 25% exclusion-zone cap is a
-      hard limit or a warning the user can override.
+**Every question in this section is closed.** They were answered on 2026-11-26,
+after this ADR was accepted, and are recorded here in place rather than in a new
+ADR, because none of the answers changes the decision this ADR records — see
+*Closing an open question* in [README.md](README.md).
+
+Each item names who decided it. All three were raised as "needs decision from
+Samuel" and were in fact settled by the orchestrating session, under Samuel's
+standing rule that he is asked only for product direction, spending, legal and
+irreversible calls; they were reported to him before he approved this ADR. The
+wording of each question as it was originally raised is kept beneath its answer.
+
+- [x] **Default mark text — nothing pre-filled. Decided by the orchestrator.**
+
+      The field starts empty. Instead of a default, the UI offers **one-tap
+      presets** — location, banque, mutuelle, employeur, administration — each of
+      which inserts `Document destiné exclusivement à <purpose> — <date>`, which
+      the user can then edit.
+
+      The reasoning is worth keeping, because the obvious alternative looks
+      helpful and is not. **Filigrane Facile defaults to its own URL**, which
+      tells a recipient nothing about who the document was given to and is
+      therefore useless to the user. And a default nobody changes is worse than a
+      prompt: it produces a document whose mark names no recipient and no
+      purpose, which is exactly the mark that fails to deter reuse. A preset that
+      requires one deliberate tap makes the user think about the purpose, which
+      is the thing that makes a mark attributable.
+
+      *As raised:* default mark text. A placeholder that suggests recipient +
+      date + purpose teaches users what makes a mark attributable, but a
+      pre-filled field that is sent unedited is worse than an empty one.
+      Recommendation: empty field, with a non-committal placeholder and
+      one-click suggestions.
+- [x] **`overlay` mode does not ship in v1. Decided by the orchestrator.**
+
+      Three reasons, and the third is the one that settles it: it is the weaker
+      mode; it is the one mode that carries EXIF through into the output rather
+      than stripping it; and **shipping two security postures on day one invites
+      the user to pick the wrong one.** A mode that can be removed from the
+      output is not something to offer alongside a mode that cannot, before the
+      safe path is proven.
+
+      The mode **stays specified** in Decision 2 above so that it can arrive
+      later without re-deciding it.
+
+      One honest consequence: the risk table above lists `overlay` as part of the
+      mitigation for the accessibility regression, since it preserves a text
+      layer. Deferring it means that mitigation is **weaker in v1 than the table
+      implies** — v1 relies on disclosure in the UI alone. That is a real cost of
+      this decision, not an oversight in the table.
+
+      *As raised:* whether `overlay` mode ships in v1 at all, given it is the one
+      mode that can give a user a false sense of protection. Recommendation: not
+      in v1; add it once the burn-in path is solid.
+- [x] **The 25% exclusion-zone cap is a hard limit in v1. Decided by the
+      orchestrator.**
+
+      Not overridable, and revisited only with evidence that a real document
+      needs more — a specific document, not a preference. **A mark you can shrink
+      to nothing is not a mark**, and an override would turn the cap into a
+      setting that the one user who most wants to defeat the watermark is the most
+      likely to find.
+
+      *As raised:* whether the 25% exclusion-zone cap is a hard limit or a
+      warning the user can override.
 
 ## Could not verify
 

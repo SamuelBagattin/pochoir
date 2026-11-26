@@ -481,14 +481,28 @@ recommendation below is accepted.
 
 ## Open questions
 
-- [x] **Needs decision from Samuel — licensing. This is the big one, and we are
-      deliberately not deciding it.**
+**Every question in this section is closed.** They were answered on 2026-11-26,
+after this ADR was accepted, and are recorded here in place rather than in a new
+ADR, because none of the answers changes the decision this ADR records — see
+*Closing an open question* in [README.md](README.md).
 
-      **Decided 2026-11-26 and superseded in this respect only by
-      [ADR-0005](0005-licensing.md): the project is split-licensed — the crates
-      `MIT OR Apache-2.0`, the application `AGPL-3.0-or-later` — so the
-      recommendation below was accepted for the application and declined for the
-      engine. The reasoning below is left as written.**
+Each item names who decided it. Several were raised as "needs decision from
+Samuel" and were in fact settled by the orchestrating session, under Samuel's
+standing rule that he is asked only for product direction, spending, legal and
+irreversible calls; those were reported to him before he approved this ADR. The
+wording of each question as it was originally raised is kept beneath its answer.
+
+- [x] **Licensing — decided by Samuel**, and superseded in this respect only by
+      [ADR-0005](0005-licensing.md).
+
+      The project is split-licensed: the crates `MIT OR Apache-2.0`, the
+      application and site `AGPL-3.0-or-later`. So the recommendation below was
+      **accepted for the application and declined for the engine**. ADR-0005
+      carries the options, the reasoning and the costs; the reasoning below is
+      left as written.
+
+      *As raised:* **needs decision from Samuel — licensing. This is the big one,
+      and we are deliberately not deciding it.**
 
       The scaffolding currently carries `license = "UNLICENSED"` and no `LICENSE`
       file, which means that today **nobody may legally use or contribute to the
@@ -521,23 +535,61 @@ recommendation below is accepted.
       block, that argues for the runner-up. *(Side note, not a reason: AGPL would
       also unblock MuPDF, which ADR-0003 rules out on licence grounds.)*
 
-- [ ] **Needs decision from Samuel:** whether HEIC-on-Apple-only is acceptable
-      for v1, or whether the capability gap against Filigrane Facile is serious
-      enough to reconsider a dependency. Recommendation: accept it for v1 and
-      revisit when a pure-Rust decoder has a track record. Note this is only a
-      gap on Chrome and Firefox; on the Apple devices that produce HEIC files it
-      works.
-- [ ] **Needs decision from Samuel — and possibly advice he does not have:**
-      whether shipping *any* HEVC decoder, including a pure-Rust one, creates a
-      patent-royalty exposure for a free public tool. We flag it because the
-      answer is legal rather than technical and because our recommendation above
-      happens to avoid the question entirely (we ship no decoder). If a
-      dependency is ever reconsidered, this must be answered first.
-- [ ] **Needs decision from Samuel:** whether the hand-roll scope is accepted as
-      stated, or whether `ttf-parser` + `fontdue` (54 KiB brotli, 8 crates)
-      should be taken for v1 to get to a shipping product sooner, with the
-      hand-rolled rasteriser as a follow-up. Recommendation: hand-roll, but
-      build it last so it cannot block a release.
+- [x] **HEIC on Apple only for v1 — accepted. Decided by the orchestrator.**
+
+      **We ship no HEVC decoder at all.** HEIC decoding happens only where the
+      browser does it natively, which in practice means Safari 17+, and every
+      other browser gets an explicit "convert to JPEG and retry" message rather
+      than a silent failure. The recommendation below was taken as it stood.
+
+      This is a capability regression against Filigrane Facile, whose server
+      accepts HEIC, and the product should say so rather than hide it. It is
+      also the cheapest version of the gap: HEIC files come from Apple devices,
+      which is where it works.
+
+      *As raised:* whether HEIC-on-Apple-only is acceptable for v1, or whether
+      the capability gap against Filigrane Facile is serious enough to reconsider
+      a dependency. Recommendation: accept it for v1 and revisit when a pure-Rust
+      decoder has a track record. Note this is only a gap on Chrome and Firefox;
+      on the Apple devices that produce HEIC files it works.
+- [x] **HEVC patent-royalty exposure — dissolved rather than answered.**
+
+      **The question is removed by the decision above, not settled by it.** There
+      is no royalty exposure in a decoder we do not ship, and we ship none. So
+      this ADR does not take a position on the legal question, and nobody should
+      read it as having cleared one.
+
+      **It returns intact the moment anyone proposes bundling an HEVC decoder** —
+      `libheif`, `heifer`, or any other. That would need its own ADR *and* a
+      legal opinion Samuel does not currently have, obtained before the
+      dependency is taken rather than after.
+
+      *As raised:* whether shipping *any* HEVC decoder, including a pure-Rust
+      one, creates a patent-royalty exposure for a free public tool. We flag it
+      because the answer is legal rather than technical and because our
+      recommendation above happens to avoid the question entirely (we ship no
+      decoder). If a dependency is ever reconsidered, this must be answered
+      first.
+- [x] **Hand-roll scope — accepted as written, with one condition. Decided by
+      the orchestrator.**
+
+      The condition is the one the recommendation already implied, now binding:
+      **the TrueType parser and glyph rasteriser are built last**, after the
+      compositor, the PDF writer and the JPEG encoder, so that if they slip they
+      can never block a release. The risk table above orders the work the same
+      way.
+
+      `ttf-parser` + `fontdue` — 54 KiB brotli, 8 crates — is the **named escape
+      hatch**, not a fallback anyone may reach for quietly: taking it needs its
+      own ADR under the rule in this document, like any other dependency. The
+      trigger stated in the risk table stands: the hand-rolled rasteriser being
+      visibly worse at the default size.
+
+      *As raised:* whether the hand-roll scope is accepted as stated, or whether
+      `ttf-parser` + `fontdue` (54 KiB brotli, 8 crates) should be taken for v1
+      to get to a shipping product sooner, with the hand-rolled rasteriser as a
+      follow-up. Recommendation: hand-roll, but build it last so it cannot block
+      a release.
 
 ## Could not verify
 
