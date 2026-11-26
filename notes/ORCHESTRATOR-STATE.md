@@ -574,6 +574,48 @@ the real one. Reconciling those two is mine at merge.
 **The banner is the signal.** The UI still shows a DEMONSTRATION notice saying the engine is not
 wired. When that comes off honestly, the MVP is real.
 
+## A mistake of mine, and the correction (`b4de985`), 2026-11-27
+
+**I merged PR #10 claiming to have verified behaviour that was not in the code I merged.** I built
+and tested from the session's *worktree*, which held the status-6/7 and payload work uncommitted,
+rather than from the pushed ref. `f5331b4` carried statuses 0 to 5 only. Everything I reported
+observing was real — I just observed it in a tree that was not the one landing on `main`.
+
+I caught it only because the session's next report said "all six items" when I had reviewed three
+commits. Nothing downstream had consumed it yet, so the cost was a wrong merge message, now
+corrected in `b4de985`'s own message rather than by rewriting history.
+
+**The rule this adds to the review bar, which was half-written already:** the bar says to diff a
+branch from its merge base rather than from `main`, because comparing trees lies. The same lie has
+a second form — *building from a worktree instead of the ref* — and I walked into it. Build the
+artefact from the thing you are merging, in a clean checkout of that ref, or you are reviewing
+somebody's desk rather than their commit.
+
+Re-verified against merged `main` from a clean `make wasm`: ten exports and `memory`; PDF status 0
+at 109 568 bytes with width and height 0; preview 600x400 with `len` exactly `w*h*4`;
+`'Confidentiel 日本語 ✦'` → status 7, payload `日本語✦`; bad dpi → status 1, payload `dpi`; junk →
+status 3, no payload. `make check` green, **347 tests**. The determinism hash is unchanged at
+`f319a700…`, so the status work did not touch the output.
+
+**The aspect-ratio refusal is now confirmed three independent ways** — the phase-2 session found
+it in the engine, I reproduced it through the CLI, and the bindings session reproduced it through
+the wasm boundary. Through the compiled module: `M`x200 is refused at 200x150, **accepted** at
+320x200, refused again at 1200x800. The consequence for the UI, already passed on: a client-side
+prediction of this refusal needs both page dimensions, never the text alone.
+
+**The best catch in that session's report is one no test of mine would have found.** `Vec::as_ptr`
+on an empty `Vec` returns a non-null dangling address, and against a reader that checks `ptr`
+before `len` an absent payload would have read as present — surfacing as a nonsense detail string
+attached to an unrelated error. `pochoir_result_ptr` now returns 0 for an empty payload.
+
+**Open, deliberately not designed:** the shrink warning cannot cross this ABI — a warning is not a
+failure, so it cannot be a status, and the success payload is already the document. ADR-0008 open
+question 4. Whatever lands must make the CLI and the browser say the same thing about the same
+document; today the CLI warns and the browser cannot.
+
+`wasm-bindings` stood down at 345k with its task complete — the rotation rule applied at a clean
+boundary rather than pushed through. Handover in `wasm-bindings-handover.md`.
+
 ## Reserved numbers
 
 - ADR-0001 stack and dependency policy — `adr-design`, merged, `Proposed`
