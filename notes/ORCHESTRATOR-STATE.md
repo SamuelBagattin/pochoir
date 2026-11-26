@@ -23,24 +23,30 @@ own git worktree.
 
 The one section to read if you are compacted mid-flight. Everything below is detail.
 
-1. **Docs + refusal-path fix** — in flight with `phase2-mark`. Four items: the warning when the
-   mark shrinks below a fraction of the request (because `MarkDoesNotFit` is unreachable and
-   ADR-0007 describes behaviour the code lacks), "no signing key" into ADR-0004 open question 2,
-   0006 and 0007 added to `CLAUDE.md`'s binding list, the Apache-2.0 font line in `LICENSE.md`.
-2. **Web UI** — in flight with `web-ui`. `web/` only. `web/DESIGN.md` before any CSS; built
-   against the stubbed ABI. Review it against ADR-0001's "None" rows (no state library, no CSS
-   framework, no icon set, no file-drop crate), no CDN, no analytics, and verify the RGAA claims
-   rather than reading them.
+**Overnight 2026-11-26/27.** Samuel went to sleep having said: push the project as far as it
+goes, deploy if it can be deployed, **do not buy the domain**, maximum development by morning,
+and watch for context bloat. My reading of the deploy half, which he should check: there is no
+Cloudflare credential in this session, and his own standing rule is that a production approval
+must be given *in the deploying session* — a relayed "feel free" cannot satisfy it. So the deploy
+path gets built and verified up to a dry run, and nobody presses the button.
+
+1. ~~Docs + refusal-path fix~~ — **merged as `ada5f2b` (PR #8).**
+2. ~~Web UI~~ — **merged as `94141cc` (PR #9).**
 3. **wasm bindings** — in flight with `wasm-bindings`
-   (`local_c80a5861-fbfd-4348-92e3-734366a6dbb2`), briefed 2026-11-26. Owns
-   `crates/pochoir-wasm/**` (new), the `members` line, the `wasm` target, the `GUARDED` list and
-   its generated allowlist; forbidden `crates/pochoir-core/**`, `crates/pochoir-cli/**`, `web/**`.
-   Told to stop and report rather than edit the core, because `phase2-mark` has those files dirty.
-   Four traps in the brief: workspace membership (or `-Cmetadata` eats an absolute path and
-   reproducibility breaks silently), `#![forbid(unsafe_code)]` vs `#[no_mangle]` under edition
-   2024, `panic = "abort"` making a panic an outage rather than an error path, and the fact that
-   **reproducibility is measurable for the first time** now there is a non-empty module — it
-   verifies ADR-0004 Decision 1 across two checkout paths.
+   (`local_c80a5861-fbfd-4348-92e3-734366a6dbb2`). The critical path: until it lands, the browser
+   runs a stub and the product does not actually work. Four ABI questions answered to it (below).
+4. **Deploy plumbing and CI for `web/`** — in flight with `deploy-plumbing`
+   (`local_d59cc1e8-b67d-4dc1-846b-60dedb26a3f7`). Owns `web/**`, `.github/**`, new `Makefile`
+   targets; told explicitly not to touch the `wasm` target, `crates/**` or the dependency guard,
+   and **not to deploy or handle a credential**.
+5. **Integration** — not briefed, cannot start until 3 lands: swap the stub for the real module,
+   teach the browser to read the error detail string, and whatever the bindings report opens.
+
+Then: **tell Samuel the moment the MVP is genuinely usable.** He has said not to register
+`pochoir.app` yet, so the trigger is now "tell him", not "tell him so he can buy it".
+
+**Rotation watch:** `phase2-mark` ended its work at ~441k and is done. Ask every live session for
+its context usage with its report.
 
 ### The ABI had drifted from the engine — three gaps, found before either side shipped
 
@@ -381,6 +387,69 @@ the existing `colour_is_too_pale()` warning.
 That session's permission classifier refused `git commit -F`, `git commit --amend` and
 `git push -u`, so three commits with written messages became one with a one-line subject. His
 configuration, and it cost us commit history. Surfaced to him; no workaround attempted.
+
+
+## Merges 8 and 9 — the refusal fix, and the UI exists (`ada5f2b`, `94141cc`), 2026-11-26
+
+**PR #8 — I was right that there was a bug and wrong about what it was.** I had reported the
+refusal path unreachable. The session reproduced before changing anything and found something
+sharper: `MarkDoesNotFit` *is* reachable, but whether it fires depends on the page's **shape**.
+I reproduced its matrix myself on generated 4032x3024 and 4032x2268 fixtures:
+
+| page | 200 x `M` | 200 x `a` | 200 chars, no spaces |
+| --- | --- | --- | --- |
+| 4:3 | **refused, exit 1** | drawn, 39% | drawn, 38% |
+| 16:9 | drawn, 32% | drawn, 50% | drawn, 48% |
+
+The mechanism holds up under my own arithmetic: the font floor is a fraction of the **shorter
+edge** (3024 x 0.035 = 105.8 px requested on 4:3, 2268 x 0.035 = 79.4 px on 16:9, both matching
+the CLI's own figures) while the width budget follows the **rotated extent**, nearer the diagonal.
+Widening a page lowers the floor faster than the budget, so the same string is refused on one
+shape and drawn on another. ADR-0007 Decision 2 now documents that, **says plainly that its first
+version was wrong**, and keeps a test pinning the 4:3 case so the variant cannot go quietly
+unreachable. The warning fires at 38-50% and is silent on a realistic mark and on 195 characters
+that wrap cleanly — I checked both. Output still byte-identical across runs. 282 tests.
+
+Also in #8: ADR-0004 open question 2 closed in place (no signing key, Samuel, with the original
+question kept beneath), and `LICENSE.md` now carries the bundled Apache-2.0 font per §4.
+
+**PR #9 — the UI, verified by building and driving it.** Zero inline `<script>`, zero inline
+`<style>`, zero `style=` attributes in the built output, which is what makes the strict CSP true
+rather than aspirational; no external origin referenced; the only "analytics" strings are the
+confidentialité page saying there are none. 112K total, 88 KB of js+css. **Five devDependencies
+and no runtime dependency at all** — ADR-0001's None rows hold. I fed a PNG through the real file
+input in a browser and watched the preview decode it and composite a tiled -30° mark at 0.30
+opacity; the presets fill the text and the mark redraws.
+
+It had also caught three real accessibility defects by testing rather than asserting — the file
+input sat outside the `:focus-within` element so tabbing produced no visible focus at all — and
+says plainly that this is AA-by-construction plus checks, **not an audit**. Correct framing.
+
+**Two process notes.** Its report quoted `cdda494` as the final SHA; the real head was `2cda26b`,
+one commit later, containing the blur re-key it made after my message arrived. Benign, but the
+review bar's warning about quoted SHAs earned its keep again — check the ref, not the report.
+And `web/` is merged with **no Makefile target and no CI coverage**, which is the first thing the
+`deploy-plumbing` session was briefed to fix.
+
+### The four ABI questions, answered to the bindings session
+
+1. **Preview pixels are RGBA8, row-major, unpadded, non-premultiplied** — `width * height * 4`
+   exactly. That is what `Pixmap` already is, so it is a straight copy out.
+2. **No `kind` field.** `width > 0` discriminates bitmap from PDF unambiguously *provided* a PDF
+   result always sets width and height to 0 — so that becomes a documented invariant with a test,
+   not an accident. I will not add a field whose value is already carried.
+3. **`pochoir_alloc` returns 0 on failure**, and `alloc(0)` returning 0 is not a failure.
+4. **On a non-OK status, `ptr`/`len` carry a UTF-8 detail string.** No new export, and it is the
+   difference between "the input format is not supported" and naming the character the font
+   subset cannot draw — which is the error a French user actually hits.
+
+### A reported bug that was not ours
+
+The UI session found that seeded tile jitter of ±½ step can push a mark off a page that fits only
+one column, and said it would bite the real engine too. It would not: the engine bounds the swing
+at `min(JITTER_FRACTION * step, (step - stamp) / 2)` with `JITTER_FRACTION = 0.15`, so the offset
+can never exceed the free gap. Checked before forwarding; the bug was in their canvas stub. Worth
+recording as the counter-example — a session's finding about *another* component is still a claim.
 
 ## Reserved numbers
 
