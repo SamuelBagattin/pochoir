@@ -1,0 +1,143 @@
+/* Reset and element defaults. Deliberately short: a 300-line reset is itself
+ * a dependency we would not be able to reason about. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+* {
+  margin: 0;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  /* Scroll padding so an in-page anchor does not land under the sticky header */
+  scroll-padding-top: var(--s-8);
+}
+
+body {
+  background: var(--c-paper);
+  color: var(--c-ink-1);
+  font-family: var(--font-sans);
+  font-size: var(--t-body);
+  line-height: 1.5625;
+  font-weight: 400;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+}
+
+h1,
+h2,
+h3 {
+  font-weight: 600;
+  text-wrap: balance;
+}
+
+h1 {
+  /* Steps down to --t-h2 on a narrow screen rather than wrapping to five
+     lines. Both ends of the clamp are on the type scale; the middle is not a
+     new size, it is the interpolation between two of them. */
+  font-size: clamp(var(--t-h2), 1.3rem + 2.6vw, var(--t-display));
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+}
+
+h2 {
+  font-size: var(--t-h2);
+  line-height: 1.23;
+  letter-spacing: -0.01em;
+}
+
+h3 {
+  font-size: var(--t-h3);
+  line-height: 1.37;
+  letter-spacing: -0.005em;
+}
+
+p,
+li {
+  max-width: var(--measure);
+}
+
+a {
+  color: var(--c-ink-1);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+}
+
+a:hover {
+  text-decoration-thickness: 2px;
+}
+
+img,
+canvas,
+svg {
+  display: block;
+  max-width: 100%;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+/* One focus treatment for the whole site. Ink rather than the accent: 16.66:1
+ * on paper, and the 2px offset keeps it visible against the dark button too. */
+:focus-visible {
+  outline: 2px solid var(--c-ink-1);
+  outline-offset: 2px;
+  border-radius: var(--r-1);
+}
+
+/* There is no `:focus { outline: none }` in this codebase and there never
+ * should be. If you are tempted, the control needs a bigger offset instead. */
+
+::selection {
+  background: var(--c-inset);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Visually hidden, still in the accessibility tree and still focusable. Used
+ * for the file input, which must stay a real focusable <input type="file">. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.skip-link {
+  position: absolute;
+  left: var(--s-4);
+  top: var(--s-4);
+  z-index: 10;
+  transform: translateY(-300%);
+  background: var(--c-ink-1);
+  color: var(--c-paper);
+  padding: var(--s-2) var(--s-4);
+  border-radius: var(--r-1);
+  text-decoration: none;
+}
+
+.skip-link:focus {
+  transform: none;
+}
