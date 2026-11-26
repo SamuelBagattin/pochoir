@@ -98,6 +98,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "pochoir-wasm"
+version = "0.1.0"
+dependencies = [
+ "png",
+ "pochoir-core",
+]
+
+[[package]]
 name = "simd-adler32"
 version = "0.3.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
