@@ -9,7 +9,18 @@
 
 import { EngineError } from './module';
 
-export type QualityMode = 'compact' | 'standard' | 'high' | 'lossless';
+/**
+ * ADR-0002 Decision 2 defines four modes. Only two of them have an engine:
+ * ADR-0008 Decision 2 records that `compact` needs a pixel downsample and
+ * `lossless` needs a PNG `/FlateDecode` image in the PDF, neither of which
+ * exists, and that both return `BAD_ARGUMENT` rather than being approximated
+ * onto a nearby quality number — because a user who asked for `lossless` and
+ * silently received JPEG q92 has been lied to about their document.
+ *
+ * Confirmed by calling the module: mode 0 and mode 3 return status 1, mode 1
+ * and mode 2 return status 0. So they are not offered here at all.
+ */
+export type QualityMode = 'standard' | 'high';
 export type PageSizing = 'a4-max' | 'native';
 export type TileDensity = 'low' | 'normal' | 'high';
 
@@ -78,11 +89,11 @@ export const MAX_INPUT_BYTES = 50 * 1024 * 1024;
 
 export const ACCEPTED_TYPES = ['image/jpeg', 'image/png'] as const;
 
+// The codes are the wire contract and keep their original numbering: 0 and 3
+// remain reserved for `compact` and `lossless` should they ever be built.
 const MODE_CODES: Record<QualityMode, number> = {
-  compact: 0,
   standard: 1,
   high: 2,
-  lossless: 3,
 };
 const SIZING_CODES: Record<PageSizing, number> = { 'a4-max': 0, native: 1 };
 const DENSITY_CODES: Record<TileDensity, number> = { low: 0, normal: 1, high: 2 };

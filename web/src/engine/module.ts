@@ -39,11 +39,24 @@ export const STATUS = {
   UNSUPPORTED_FORMAT: 3,
   OUT_OF_MEMORY: 4,
   INTERNAL: 5,
+  /** ADR-0007 Decision 2: wrap, shrink, then refuse. Never clip. */
+  TEXT_DOES_NOT_FIT: 6,
+  /** ADR-0007 Decision 6. Carries every offending character in `detail`. */
+  UNSUPPORTED_CHARACTER: 7,
 } as const;
+
+export type EngineErrorKind =
+  | 'decode'
+  | 'unsupported'
+  | 'oom'
+  | 'argument'
+  | 'internal'
+  | 'does-not-fit'
+  | 'unsupported-character';
 
 export class EngineError extends Error {
   constructor(
-    readonly kind: 'decode' | 'unsupported' | 'oom' | 'argument' | 'internal',
+    readonly kind: EngineErrorKind,
     message: string,
     /**
      * Engine-supplied detail, when there is any — the offending characters for
@@ -87,6 +100,14 @@ export function errorForStatus(status: number, detail?: string): EngineError {
       return new EngineError('unsupported', 'the input format is not supported', detail);
     case STATUS.OUT_OF_MEMORY:
       return new EngineError('oom', 'the engine ran out of memory', detail);
+    case STATUS.TEXT_DOES_NOT_FIT:
+      return new EngineError('does-not-fit', 'the mark will not fit the page', detail);
+    case STATUS.UNSUPPORTED_CHARACTER:
+      return new EngineError(
+        'unsupported-character',
+        'the mark contains characters the font cannot draw',
+        detail,
+      );
     default:
       return new EngineError('internal', `engine failed with status ${status}`, detail);
   }

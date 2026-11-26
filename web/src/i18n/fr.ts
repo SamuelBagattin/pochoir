@@ -117,23 +117,92 @@ export const fr = {
     suffix: '-filigrane',
   },
 
+  /**
+   * One message per engine status. Two rules they are written to, both of
+   * which matter more than they look:
+   *
+   *   - Say whose fault it is, accurately. Someone who has just handed a
+   *     watermarking tool a photograph of their passport and received an
+   *     error will assume they did something wrong. Where they did not, the
+   *     message says so.
+   *   - Name the next action, or admit there is not one. "Une erreur est
+   *     survenue" is the message these replace.
+   *
+   * Never blame the document: "ce fichier est invalide" reads as a verdict on
+   * the user's identity papers, where "n'a pas pu être lu" is a verdict on
+   * our decoder, which is what it actually is.
+   */
   errors: {
     title: 'Une erreur est survenue',
+
+    /**
+     * Status 1, BadArgument. A parameter out of range — the payload names it,
+     * `dpi` for instance. No control can produce one, so if a user ever sees
+     * this the interface sent something it had no business sending, and the
+     * sentence says so rather than implying they did something wrong. A mark
+     * the font cannot draw has its own status and is not this.
+     */
+    refused:
+      'Le moteur a refusé un réglage envoyé par l’interface. C’est un défaut de notre côté, pas un problème avec votre document. Rechargez la page et réessayez.',
+
+    /**
+     * Status 6, TextDoesNotFit. ADR-0007 Decision 2 wraps, then shrinks to the
+     * 1 % floor, then refuses — so this is reached by text that cannot be
+     * *broken*, not by text that is merely long. Saying "trop long" would send
+     * someone to delete words when the fix is a space.
+     */
+    textDoesNotFit:
+      'Ce texte ne peut pas être découpé en lignes assez courtes pour tenir sur la page, même à la plus petite taille. Ajoutez des espaces, ou raccourcissez-le.',
+
+    /**
+     * Status 7, UnsupportedCharacter, with the characters named. The article,
+     * the verb and the pronoun all agree, so the plural is a second sentence
+     * rather than an `(s)`. French takes the singular at n = 1 only, and
+     * n >= 1 always holds here, so two branches are correct and
+     * `Intl.PluralRules` is not needed.
+     */
+    unsupportedCharacters: (list: string, count: number) =>
+      count === 1
+        ? `Le caractère ${list} n’est pas pris en charge par la police de Pochoir. Retirez-le du texte du filigrane.`
+        : `Les caractères ${list} ne sont pas pris en charge par la police de Pochoir. Retirez-les du texte du filigrane.`,
+
+    /**
+     * Status 7 with nothing in the payload. Drops the instruction to remove
+     * "it", because without the payload we cannot say which one, and telling
+     * somebody to remove a character we decline to name is worse than
+     * describing the class.
+     */
+    unsupportedCharactersUnnamed:
+      'Le texte du filigrane contient un caractère que la police de Pochoir ne sait pas dessiner. Les emoji et les alphabets non latins ne sont pas pris en charge.',
+
+    /** Status 2, DecodeFailed. */
+    decode:
+      'Ce fichier n’a pas pu être lu comme une image. Il est peut-être incomplet ou endommagé. Essayez une autre copie, ou réexportez-la depuis l’application qui l’a produite.',
+
+    /** Status 3, UnsupportedFormat. Reachable past the picker's MIME filter. */
+    unsupportedFormat:
+      'Ce format d’image n’est pas pris en charge. Pochoir accepte le JPEG et le PNG.',
+
+    /** Status 4, OutOfMemory. Not "réduisez la densité": that would be false. */
+    outOfMemory:
+      'Le moteur a manqué de mémoire pour traiter cette image. Elle est probablement trop grande pour cet appareil : essayez une version de plus petite définition.',
+
+    /** Status 5, Internal — and the worker discarding a faulted instance. */
+    crashed:
+      'Le moteur s’est arrêté de façon inattendue. Rechargez la page. Si cela se reproduit avec le même document, c’est un défaut de notre côté.',
+
+    /** The client's own deadline, not a status. */
     timeout:
       'Le calcul a pris trop de temps et a été interrompu. Essayez une image plus petite, ou réduisez la densité.',
-    crashed:
-      'Le moteur s’est arrêté de façon inattendue. Rechargez la page ou essayez un autre fichier.',
-    decode:
-      'Ce fichier n’a pas pu être lu comme une image. Il est peut-être corrompu ou dans un format inattendu.',
-    unsupported:
-      'Votre navigateur ne prend pas en charge les fonctions nécessaires (WebAssembly dans un Web Worker). Mettez-le à jour pour utiliser Pochoir.',
-    generic: 'Le calcul a échoué.',
-  },
 
-  stub: {
-    tag: 'Démonstration',
-    banner:
-      'Le moteur Rust/WebAssembly n’est pas encore branché. Le filigrane affiché est calculé par le navigateur et le PDF produit est un fichier de démonstration. Le document ne quitte pas pour autant votre appareil.',
+    /** No worker, or no WebAssembly, or the module would not instantiate. */
+    unsupportedBrowser:
+      'Votre navigateur ne prend pas en charge les fonctions nécessaires (WebAssembly dans un Web Worker). Mettez-le à jour pour utiliser Pochoir.',
+
+    /** Should be unreachable: the export button is disabled without a file. */
+    noImage: 'Choisissez d’abord un document.',
+
+    generic: 'Le calcul a échoué.',
   },
 
   privacy: {

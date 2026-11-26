@@ -1,3 +1,4 @@
+import { ENGINE_INTEGRITY, ENGINE_URL } from './engine-manifest';
 import { packOptions, type MarkOptions } from './options';
 import {
   EngineError,
@@ -54,21 +55,9 @@ export interface PochoirExports {
   pochoir_result_free(handle: number): void;
 }
 
-/** Where the compiled engine is served from, relative to the site root. */
-export const WASM_URL = '/pochoir_core.wasm';
-
-/**
- * ADR-0004 Decision 2: the module is fetched with an `integrity` hash and the
- * `Response` handed to `instantiateStreaming`, so a mismatch fails closed.
- * The hash is a build output; until the build emits one this stays undefined
- * and the fetch is plain — which is exactly why `select.ts` does not pick this
- * implementation yet.
- */
-export const WASM_INTEGRITY: string | undefined = undefined;
-
 export async function instantiate(
-  url: string = WASM_URL,
-  integrity: string | undefined = WASM_INTEGRITY,
+  url: string = ENGINE_URL,
+  integrity: string | undefined = ENGINE_INTEGRITY,
 ): Promise<PochoirExports> {
   const response = await fetch(url, integrity ? { integrity } : undefined);
   if (!response.ok) {
@@ -148,10 +137,29 @@ export class WasmModule implements PochoirModule {
       const width = this.ex.pochoir_result_width(handle);
       const height = this.ex.pochoir_result_height(handle);
 
+      // A bitmap is discriminated from a document by its dimensions: a
+      // finished PDF reports 0 x 0. Measured against the module, which returns
+      // 1200 x 800 for a preview and 0 x 0 for a document.
+      const isBitmap = width > 0 && height > 0;
+
+      // RGBA8, row-major, no padding — so the length is implied by the
+      // dimensions, and a mismatch means the engine and this wrapper disagree
+      // about the pixel format. Checking it here turns what would otherwise be
+      // a thrown `ImageData` constructor inside a Svelte effect, with a blank
+      // preview and a console trace, into a reported failure.
+      if (isBitmap && len !== width * height * 4) {
+        throw new EngineError(
+          'internal',
+          `preview is ${len} bytes, expected ${width * height * 4} for ${width}x${height} RGBA8`,
+        );
+      }
+
       // Copy out before any further wasm call: growing the memory detaches the
-      // existing ArrayBuffer and any view over it.
+      // existing ArrayBuffer and any view over it. `slice()` gives a buffer
+      // with byteOffset 0, which is what makes the Uint8ClampedArray view over
+      // it correct.
       const bytes = new Uint8Array(this.ex.memory.buffer, ptr, len).slice();
-      return width > 0 && height > 0
+      return isBitmap
         ? { pixels: new Uint8ClampedArray(bytes.buffer), width, height }
         : { bytes };
     } catch (error) {
@@ -176,11 +184,15 @@ export class WasmModule implements PochoirModule {
 
   /**
    * Reads `ptr`/`len` as a UTF-8 detail on a failing result, if the engine put
-   * anything there. Speculative and bounds-checked: today's contract says
-   * nothing about those fields on failure, so an engine that leaves them zero
-   * simply yields no detail. It is here so the Rust side can start reporting
-   * which character it refused (ADR-0007 Decision 6) without a change on this
-   * side as well.
+   * anything there.
+   *
+   * **Measured against the merged module: it never does.** `Outcome::failed`
+   * carries `bytes: Vec::new()`, so every failure reports `len` 0 and this
+   * returns `undefined`. It is kept, bounds-checked and free, because it is
+   * the half of the payload mechanism that lives on this side: the Rust side
+   * can start naming the character it refused (ADR-0007 Decision 6) without a
+   * second change here. Until it does, the interface cannot tell the user
+   * which character was the problem — see `errors.refused` in `i18n/fr.ts`.
    */
   private detailOf(handle: number): string | undefined {
     const ptr = this.ex.pochoir_result_ptr(handle);

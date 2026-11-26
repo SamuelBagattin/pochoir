@@ -2,8 +2,14 @@ import { EngineError, type PochoirModule, type PreviewBitmap } from './module';
 import { rgbOf, type MarkOptions, type TileDensity } from './options';
 
 /**
- * A STUB. It exists so the interface can be built, reviewed and exercised
- * before the Rust/WebAssembly engine is wired up, and it is deliberately
+ * A STUB, AND NO LONGER WIRED UP. `select.ts` returns the real engine; nothing
+ * imports this file, so it is not in the bundle and cannot ship by accident.
+ * It is kept because it is genuinely useful for working on the interface
+ * without a Rust toolchain — re-point `select.ts` at it deliberately, never by
+ * default.
+ *
+ * It existed so the interface could be built, reviewed and exercised
+ * before the Rust/WebAssembly engine was wired up, and it is deliberately
  * written behind exactly the same `PochoirModule` interface as the real one:
  * replacing it is a one-line change in `select.ts` and touches nothing else.
  *
@@ -43,9 +49,7 @@ export class StubModule implements PochoirModule {
     options: MarkOptions,
   ): Promise<Uint8Array> {
     const canvas = await composite(image, text, options, Number.POSITIVE_INFINITY);
-    const quality = { compact: 0.75, standard: 0.85, high: 0.92, lossless: 0.95 }[
-      options.mode
-    ];
+    const quality = { standard: 0.85, high: 0.92 }[options.mode];
     const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality });
     const jpeg = new Uint8Array(await blob.arrayBuffer());
     await pretendToWork(260, 700);

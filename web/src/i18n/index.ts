@@ -41,3 +41,48 @@ export function formatNumber(value: number, digits = 2): string {
     maximumFractionDigits: digits,
   }).format(value);
 }
+
+/** How many offending characters we will name before summarising the rest. */
+const CHARACTER_LIST_CAP = 5;
+
+/**
+ * Turn the engine's unsupported-character payload into something that can sit
+ * inside a sentence.
+ *
+ * Formatting, deliberately kept out of the string catalogue: an English
+ * catalogue would want the same list built with " and " instead of " et ".
+ *
+ * Four things happen here, and the last is the one that is easy to miss:
+ *
+ *  1. **De-duplicate**, preserving first-seen order. The engine already does,
+ *     but somebody who typed the same symbol four times should be told about
+ *     one character whichever side does it.
+ *  2. **Cap the list**, so a pasted line of emoji does not become a paragraph.
+ *  3. **French enumeration** — guillemets with narrow no-break spaces, commas,
+ *     and « et » before the last.
+ *  4. **Prefix a combining mark with U+25CC DOTTED CIRCLE.** ADR-0007
+ *     Decision 6 reports a leftover combining mark like any other unsupported
+ *     character, and the engine really does return a bare U+0301. Dropped
+ *     into a sentence it would attach itself to the closing guillemet and
+ *     render as a corrupt quotation mark rather than as the thing being
+ *     named. The dotted circle is the standard way to show one in isolation.
+ */
+export function formatCharacterList(payload: string): { list: string; count: number } {
+  const distinct = [...new Set([...payload])];
+  const shown = distinct.slice(0, CHARACTER_LIST_CAP);
+  const quoted = shown.map((character) => {
+    const printable = /\p{M}/u.test(character) ? `\u25CC${character}` : character;
+    return `\u00AB\u202F${printable}\u202F\u00BB`;
+  });
+
+  const hidden = distinct.length - shown.length;
+  if (hidden > 0) {
+    const others = hidden === 1 ? '1 autre' : `${hidden} autres`;
+    return { list: `${quoted.join(', ')} et ${others}`, count: distinct.length };
+  }
+  if (quoted.length === 1) return { list: quoted[0]!, count: 1 };
+  return {
+    list: `${quoted.slice(0, -1).join(', ')} et ${quoted.at(-1)}`,
+    count: distinct.length,
+  };
+}
