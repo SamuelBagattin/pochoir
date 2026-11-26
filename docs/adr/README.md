@@ -87,3 +87,4 @@ un-accept an ADR. We supersede it.
 | [0005](0005-licensing.md) | Licensing | Accepted |
 | [0006](0006-image-page-size-cap.md) | Cap an image input's page at A4 | Accepted |
 | [0007](0007-watermark-specification-corrections.md) | Watermark specification corrections from implementation | Accepted |
+| [0009](0009-deploy-plumbing-and-web-attestation.md) | Deploy plumbing, and what attestation actually covers | Proposed |

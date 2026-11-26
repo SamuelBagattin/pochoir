@@ -2,16 +2,34 @@
 # Keep every target here; never put build logic only in a CI workflow.
 
 .DEFAULT_GOAL := help
-.PHONY: help fmt fmt-check lint test build wasm wasm-repro deps-check deps-update font-subset nfc-table check clean
+.PHONY: help fmt fmt-check lint test build wasm wasm-repro deps-check deps-update \
+        font-subset nfc-table check clean \
+        web-install web-build web-check web-serve web-reproduce web-deploy-check \
+        web-engine web-site web-deploy web-verify-live web-clean
 
 WASM_TARGET := wasm32-unknown-unknown
 WASM_ARTEFACT := target/$(WASM_TARGET)/release/pochoir_wasm.wasm
 # `$(CARGO_HOME)` is not exported by default; rustup's own default is ~/.cargo.
 CARGO_HOME_DIR := $(if $(CARGO_HOME),$(CARGO_HOME),$(HOME)/.cargo)
 
+# `--frozen-lockfile` everywhere, including on a laptop: the lock file is
+# committed and a build that silently resolves something else is not the build
+# CI ran. Pass FROZEN= to relax it when you are deliberately adding a package.
+FROZEN ?= --frozen-lockfile
+
+# wrangler is NOT a dependency of this repository. It is fetched on demand, at
+# an exact version, only by the deploy targets — measured at 80 packages and
+# 268 MB, which is not a price `make check` should pay. See ADR-0009.
+#
+# WRANGLER_SEND_METRICS=false because wrangler's telemetry is on by default and
+# posts usage data to Cloudflare. A tool whose claim is that nothing leaves the
+# device should not have its own build phoning home.
+WRANGLER_VERSION := 4.168.0
+WRANGLER := WRANGLER_SEND_METRICS=false pnpm dlx wrangler@$(WRANGLER_VERSION)
+
 help: ## Show this help
 	@printf 'Usage: make <target>\n\n'
-	@awk 'BEGIN { FS = ":.*## " } /^[a-zA-Z0-9_-]+:.*## / { printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
+	@awk 'BEGIN { FS = ":.*## " } /^[a-zA-Z0-9_-]+:.*## / { printf "  \033[36m%-17s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 
 fmt: ## Format all Rust code in place
 	cargo fmt --all
@@ -69,8 +87,73 @@ nfc-table: ## Print the NFC composition table for crates/pochoir-core/src/mark/n
 	@echo '# Paste between the markers in crates/pochoir-core/src/mark/nfc.rs.'
 	@./scripts/gen-nfc-table.py
 
-check: fmt-check lint test wasm deps-check ## Everything CI runs
+
+# --- the web application -----------------------------------------------
+#
+# `web-build` is the only way to produce a shippable `web/dist`. The bare
+# `pnpm build` is not: it stops before Subresource Integrity, the module
+# preloads and the manifest, and the headers in `web/public/_headers` make
+# an unattested bundle a blank page rather than a working one. ADR-0009.
+
+web-install: ## Install the web dependencies from the committed lock file
+	pnpm --dir web install $(FROZEN)
+
+web-engine: ## Place a compiled wasm engine in the site: make web-engine ENGINE=path
+	@test -n "$(ENGINE)" || { \
+		echo 'Usage: make web-engine ENGINE=target/$(WASM_TARGET)/release/pochoir_wasm.wasm'; \
+		echo '       make web-engine ENGINE=--clear   to remove it again'; \
+		exit 2; \
+	}
+	./scripts/web-engine.py $(if $(filter --clear,$(ENGINE)),--clear,"$(ENGINE)")
+
+web-build: web-install ## Build web/dist, then attest it (SRI, preloads, manifest)
+	pnpm --dir web run build
+	./scripts/web-attest.py web/dist
+
+web-check: web-build ## Type-check the web app and assert the built bundle
+	pnpm --dir web run check
+	./scripts/check-web-inline.py web/dist
+	./scripts/web-attest.py web/dist --verify
+
+web-serve: web-build ## Serve web/dist locally with the production response headers
+	./scripts/web-serve.py --dist web/dist
+
+web-reproduce: web-install ## Build the site twice from different paths and compare
+	./scripts/check-web-reproducible.sh
+
+web-site: ## The deployable site: real engine, bundle, attestation, assertions
+	# Nothing imports the stub any anymore, so a bundle with no engine renders
+	# nothing. The engine has to be placed BEFORE astro build: it goes into
+	# web/public/, and the hash it writes into engine-manifest.ts has to be
+	# inside the bundle the hash describes.
+	$(MAKE) wasm
+	$(MAKE) web-engine ENGINE=$(WASM_ARTEFACT)
+	$(MAKE) web-check
+	./scripts/web-attest.py web/dist --verify --require-engine
+
+web-deploy-check: web-site ## Everything a deploy does, except the deploy
+	@printf '\n--- resolved response headers ---\n'
+	./scripts/web-serve.py --dist web/dist --explain / /_pochoir/app.js /_pochoir/engine/e.wasm
+	@printf '\n--- wrangler dry run ---\n'
+	cd web && $(WRANGLER) deploy --dry-run --outdir ../target/wrangler-dry-run
+
+web-deploy: web-site ## Publish to Cloudflare. Needs credentials this repo does not hold.
+	@test -n "$$CLOUDFLARE_API_TOKEN" || { \
+		echo 'make web-deploy: CLOUDFLARE_API_TOKEN is not set.'; \
+		echo 'There is no Cloudflare account for this project yet. See docs/DEPLOY.md.'; \
+		exit 2; \
+	}
+	cd web && $(WRANGLER) deploy
+
+web-verify-live: ## Fetch ORIGIN and compare every byte against the manifest
+	@test -n "$(ORIGIN)" || { echo 'Usage: make web-verify-live ORIGIN=https://example'; exit 2; }
+	./scripts/verify-live.py "$(ORIGIN)" --manifest web/dist/manifest.json
+
+web-clean: ## Remove the web build output
+	rm -rf web/dist web/.astro
+
+check: fmt-check lint test wasm deps-check web-check ## Everything CI runs
 	@printf '\nAll checks passed.\n'
 
-clean: ## Remove build artefacts
+clean: web-clean ## Remove build artefacts
 	cargo clean
