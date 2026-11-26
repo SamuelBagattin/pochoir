@@ -122,8 +122,22 @@ names the ADR requirement.
 
 1. ~~`scaffold` → `main`~~ — merged as `ea30fcd`, `make check` green on main.
 2. ~~`adr-design` → `main`~~ — merged as `1a8303b`, then the count correction as `430256d`. ADRs are `Proposed`.
-3. Nothing queued. No implementation session starts until Samuel approves the ADRs and settles
-   the licence.
+3. ~~PR #1 `licence-rename` → `main`~~ — merged as `e5a692f`. Licence texts verified against
+   gnu.org / apache.org / spdx.org myself: AGPL byte-identical, Apache and MIT differing only in
+   the copyright line. ADRs 0001–0003 now `Accepted`. Binary is `pochoir`. Per-crate guard live
+   and passing on merged `main`.
+4. **Open:** `licence-rename` follow-up — ADR-0005 (licensing, superseding ADR-0001's licensing
+   recommendation in that respect only) and the CI `on: push` branch filter. Docs and CI only.
+5. **Proposed, not started:** `core-write-path` (task_f7faf84f) — engine phase 1, image in → PDF
+   out, no watermark. The harness refused a direct start because that turn was triggered by
+   another session's message, so it is a card awaiting Samuel's click.
+
+### Session ownership while both run
+
+- `licence-rename` owns `docs/adr/` and `.github/`.
+- `core-write-path` owns `crates/` and `scripts/`.
+  Disjoint on purpose: `core-write-path` makes the first dependency bump, which rewrites
+  `scripts/allowlist/*`, and that must not collide with a docs change.
 
 ### Merge 2 review — `claude/adr-design-238adf` → `main`, 2026-11-26
 
