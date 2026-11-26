@@ -478,6 +478,49 @@ at `min(JITTER_FRACTION * step, (step - stamp) / 2)` with `JITTER_FRACTION = 0.1
 can never exceed the free gap. Checked before forwarding; the bug was in their canvas stub. Worth
 recording as the counter-example — a session's finding about *another* component is still a claim.
 
+## Four defects in merged code, found by writing a checklist, 2026-11-27
+
+The `web-ui` session was told to stand by and draft the French status wording plus an integration
+checklist. Writing the checklist found **four real bugs in code already on `main`**, none of which
+bites until a real module sits behind the seam. I verified all four against merged `main` before
+accepting them:
+
+1. **The worker keeps serving on a poisoned instance.** `panic = "abort"` traps a wasm instance
+   permanently; the trap surfaces as a `RuntimeError` that `worker.ts`'s catch swallows, and the
+   handler goes on accepting work. One real error becomes a sequence of unrelated-looking ones,
+   and the second is the one that makes a user distrust the tool. Confirmed: the catch posts a
+   failure and nothing marks the instance dead.
+2. **Stale requests are sent, not just discarded.** The generation counter is client-side, so a
+   synchronous engine runs every queued render to completion. Three seconds of dragging buys ten
+   seconds of catching up. Needs latest-wins coalescing, not a longer debounce.
+3. **The error detail never reaches the UI.** `worker.ts` builds `{kind, message}` and `Failure`
+   has no third field, so the whole status-7 payload mechanism was wired at one end only.
+   Its own regression from the round before, caught by itself a round later.
+4. **`EngineClient.supported` gates on `OffscreenCanvas`**, a stub requirement, so browsers that
+   could run Pochoir are told to update.
+
+Plus: `dpi` is `u32` on the wire against the engine's `f32`, and `>>> 0` truncates a fractional
+value and wraps an out-of-range one into a plausible large DPI. Fixed now, while it cannot fire.
+
+**Briefed to the `web-ui` session, scoped to `web/src/**` only.** I checked `deploy-plumbing`'s
+worktree first: it holds `web/public/_headers`, `web/wrangler.jsonc` and new `scripts/*.py`, and
+nothing under `web/src/`, so the two lanes do not touch. Deferred deliberately: a second worker
+for exports (a design decision, not a correctness fix, and unmeasurable against a stub), the
+wasm URL and integrity hash (outputs of the deploy session's build work), and the 15s/60s
+timeouts (guesses that want one measurement on a mid-range Android, which nobody has tonight).
+
+**The best catch in the wording note is one no code review finds:** ADR-0007 D6 reports a leftover
+combining mark like any other character, and a bare U+0301 interpolated into a sentence attaches
+itself to the closing guillemet — so the character we are naming renders as a corrupt quote. It is
+prefixed with U+25CC DOTTED CIRCLE. That would have shipped.
+
+### Session progress at this point
+
+`wasm-bindings` has `crates/pochoir-wasm/`, **ADR-0008 written**, a generated allowlist, a
+`scripts/check-repro.sh`, and modifications to `Cargo.toml`, `Makefile` and `check-deps.sh` — all
+inside its lane. `deploy-plumbing` has `_headers`, `wrangler.jsonc` and three new scripts,
+likewise. Neither has strayed.
+
 ## Reserved numbers
 
 - ADR-0001 stack and dependency policy — `adr-design`, merged, `Proposed`
