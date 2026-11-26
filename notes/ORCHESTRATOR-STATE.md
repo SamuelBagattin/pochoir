@@ -240,11 +240,18 @@ Also accepted from the session's feedback, to be briefed with the first implemen
 2. ~~Public or private repo~~ — **public**, created and pushed 2026-11-26.
 3. **Registering `pochoir.app`** — his purchase, not mine to make. Availability was verified, not
    reserved, so it can go at any time.
-4. **Licence** — `adr-design` will recommend one in ADR-0001; the choice is his. `Cargo.toml` says
-   `license = "UNLICENSED"` with a TODO and there is no `LICENSE` file. This matters more now that
-   the repo is public: code with no licence is "all rights reserved" by default, which contradicts
-   the public-good framing.
-5. **Approving the ADRs** before any implementation session starts.
+4. ~~Licence~~ — **decided 2026-11-26: split licensing.** `pochoir-core` and `pochoir-cli` under
+   `MIT OR Apache-2.0`; the web app and site under `AGPL-3.0-or-later`. Rationale: AGPL §13 still
+   catches the fork-and-host-it case, which is the harm this product exists to prevent, while the
+   engine stays usable by the integrators we identified as a real gap (MTES-MCT's own `potentiel`
+   repo calls the government API; a browser-extension author had to scrape it) and by anyone
+   packaging the CLI — public-sector and corporate projects frequently cannot take AGPL at all.
+   ADR-0001 recommended AGPL throughout; Samuel took the split instead. **Not yet implemented:**
+   two `LICENSE` files, per-crate `license` fields replacing `UNLICENSED`, and a README statement.
+   Until that lands the public repo is legally all-rights-reserved. Folded into the first
+   implementation session as its opening commit.
+5. **Approving the ADRs** before any implementation session starts. He asked for a summary of the
+   essentials first, which I gave him in the session rather than as a document.
 
 ## Carried forward from merge 1
 
