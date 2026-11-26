@@ -162,6 +162,16 @@ names the ADR requirement.
   rules established by Adobe for PostScript"** — a `shall` that incorporates Adobe TN #5116 by
   reference. So the APP14 CMYK inversion is normative *through* §7.4.8, not merely a convention
   we are right to follow. That is the sentence ADR-0001's note should cite.
+  **Two corrections to my own account of this.** (a) I cited "extracted lines 3021-3022". Line
+  numbers from a `pdftotext` run are not a citable location — the engine session's extraction puts
+  §7.5.4 there, mine puts §7.4.8, and both are internally consistent. Cite the clause, never the
+  extraction. (b) **Neither of us has read TN #5116.** §7.4.8 makes its rules binding; what those
+  rules actually say about inverted CMYK storage is still inferred from the observed behaviour of
+  Photoshop-written files. The incorporation is verified; the incorporated content is not. Someone
+  should read the note before the ADR claims more than that.
+  Bonus from the same extraction, corroborating the writer: §7.5.4 requires a cross-reference
+  entry to be "exactly 20 bytes", which is what our `%010d %05d n \r\n` format satisfies and what
+  a test already asserts.
 - **End to end on a real 1512×806 JPEG:** byte-identical across two runs; poppler reports the
   embedded image as `1512x806 rgb 8bpc jpeg 200 ppi`, so no resampling; `pdfinfo` gives `Pochoir`
   for both strings, no dates, no metadata stream; `Exif`/`GPS`/`CreationDate`/`ModDate`/`xpacket`/
