@@ -14,7 +14,7 @@ use fixtures::{
     quadrants, with_exif,
 };
 use pochoir_core::exif::{EXIF_HEADER, Orientation};
-use pochoir_core::{OutputOptions, image_to_pdf};
+use pochoir_core::{OutputOptions, PageSizing, image_to_pdf};
 
 const RED: [u8; 3] = [220, 30, 30];
 const GREEN: [u8; 3] = [30, 180, 30];
@@ -215,11 +215,17 @@ fn an_absent_or_nonsensical_orientation_tag_leaves_the_image_alone() {
 #[test]
 fn the_page_is_the_images_own_aspect_ratio_at_the_chosen_dpi() {
     // ADR-0002: "the page is the image's own aspect ratio, sized so that it
-    // prints at the chosen DPI". Never A4, never stretched on one axis.
+    // prints at the chosen DPI". Never stretched on one axis. ADR-0006 adds a
+    // cap at A4, so this checks the uncapped rule through the opt-out; the cap
+    // has its own table below.
     for (width, height) in [(600u32, 400u32), (400, 600), (512, 512), (1000, 250)] {
         for dpi in [150.0f32, 200.0, 300.0] {
             let bytes = jpeg(&gradient(width, height), 75);
-            let options = OutputOptions { quality: 75, dpi };
+            let options = OutputOptions {
+                quality: 75,
+                dpi,
+                page_sizing: PageSizing::Native,
+            };
             let pdf = image_to_pdf(&bytes, &options).expect("renders");
             let (page_width, page_height) = media_box(&pdf);
             let expected_width = f64::from(width) / f64::from(dpi) * 72.0;
@@ -270,6 +276,221 @@ fn a_resolution_the_input_states_is_honoured_when_it_is_higher() {
     );
 }
 
+/// One row of the A4 table: pixel width and height, the resolution the input
+/// states, the page in millimetres with the cap, and the page without it.
+type SizingCase = (u32, u32, f32, (f64, f64), (f64, f64));
+
+/// Page size in millimetres, which is how every one of these cases is stated.
+fn page_mm(pdf: &[u8]) -> (f64, f64) {
+    let (width, height) = media_box(pdf);
+    (width / 72.0 * 25.4, height / 72.0 * 25.4)
+}
+
+#[test]
+fn an_image_page_is_capped_to_a4_but_never_enlarged_to_it() {
+    // ADR-0006. Every case is (pixels, stated dpi, expected mm with the cap,
+    // expected mm without it), and the expectations are computed from ISO 216
+    // rather than from our own code.
+    //
+    // The pixel counts are scaled down from the real-world ones, and the
+    // resolutions with them: the page is a function of pixels divided by dpi,
+    // so a 1008 px image at 50 dpi lands on exactly the same sheet as the
+    // 4032 px one at 200 that it stands in for, for a sixteenth of the
+    // encoding. `page.rs` checks the full-size numbers at the geometry level,
+    // where it costs nothing, and `the_embedded_jpeg_reports_the_resolution_
+    // the_page_really_prints_at` runs a real 12-megapixel frame end to end.
+    let cases: [SizingCase; 5] = [
+        // A 12 MP phone photo, landscape: the headline case. Larger than A2
+        // before the cap. Stands in for 4032x3024 at 200 dpi.
+        (1008, 756, 50.0, (280.0, 210.0), (512.1, 384.1)),
+        // The same photo portrait.
+        (756, 1008, 50.0, (210.0, 280.0), (384.1, 512.1)),
+        // Square: bounded by A4's short edge whichever way the sheet is turned.
+        (750, 750, 50.0, (210.0, 210.0), (381.0, 381.0)),
+        // A scan of an identity card, already far inside A4. Must come out at
+        // its true size, not blown up to fill the sheet.
+        (1011, 638, 300.0, (85.6, 54.0), (85.6, 54.0)),
+        // An A4 scan. 210 mm at 150 dpi is 1240.2 px, so a scanner writes 1241
+        // and the page is a hair over A4; the cap takes the hair off and
+        // nothing more.
+        (1241, 1755, 150.0, (210.0, 297.0), (210.1, 297.2)),
+    ];
+
+    for (width, height, dpi, capped_mm, native_mm) in cases {
+        // Stating the resolution in EXIF is what a scanner does, and
+        // `max(stated, requested)` then makes it the effective one.
+        let bytes = with_exif(
+            &jpeg(&gradient(width, height), 60),
+            &exif_block(Orientation::TopLeft, dpi as u32, false),
+        );
+
+        let capped = image_to_pdf(
+            &bytes,
+            &OutputOptions {
+                quality: 60,
+                dpi,
+                page_sizing: PageSizing::CapToA4,
+            },
+        )
+        .expect("renders");
+        let got = page_mm(&capped);
+        assert!(
+            (got.0 - capped_mm.0).abs() < 0.2 && (got.1 - capped_mm.1).abs() < 0.2,
+            "{width}x{height} at {dpi} dpi capped to {got:?} mm, expected {capped_mm:?}"
+        );
+        // Inside an A4 sheet turned either way, with a hair of slack for the
+        // rounding above.
+        let (short, long) = (got.0.min(got.1), got.0.max(got.1));
+        assert!(
+            short <= 210.05 && long <= 297.05,
+            "{width}x{height}: {got:?} mm does not fit an A4 sheet"
+        );
+
+        let native = image_to_pdf(
+            &bytes,
+            &OutputOptions {
+                quality: 60,
+                dpi,
+                page_sizing: PageSizing::Native,
+            },
+        )
+        .expect("renders");
+        let got = page_mm(&native);
+        assert!(
+            (got.0 - native_mm.0).abs() < 0.2 && (got.1 - native_mm.1).abs() < 0.2,
+            "{width}x{height} at {dpi} dpi native was {got:?} mm, expected {native_mm:?}"
+        );
+    }
+}
+
+#[test]
+fn the_cap_changes_the_page_and_nothing_else() {
+    // The argument that settled this: there is no quality at stake, because
+    // capping touches no pixel. Same input, same quality, two page sizings -
+    // the embedded JPEG must differ only in the density it reports about
+    // itself, and the decoded pixels must be identical.
+    let bytes = jpeg(&gradient(1200, 900), 85);
+    let options = OutputOptions {
+        quality: 85,
+        dpi: 50.0,
+        page_sizing: PageSizing::CapToA4,
+    };
+    let capped = image_to_pdf(&bytes, &options).expect("renders");
+    let native = image_to_pdf(
+        &bytes,
+        &OutputOptions {
+            page_sizing: PageSizing::Native,
+            ..options
+        },
+    )
+    .expect("renders");
+
+    assert_ne!(page_mm(&capped), page_mm(&native), "the cap did nothing");
+
+    let (cw, ch, capped_pixels) = decode_with_zune(first_image_stream(&capped));
+    let (nw, nh, native_pixels) = decode_with_zune(first_image_stream(&native));
+    assert_eq!((cw, ch), (nw, nh), "the cap resampled the image");
+    assert_eq!((cw, ch), (1200, 900));
+    assert_eq!(
+        capped_pixels, native_pixels,
+        "the cap changed a pixel; it is only allowed to change the page"
+    );
+
+    // The two datastreams differ only in the JFIF density field, which is the
+    // one thing that honestly should change.
+    let capped_stream = first_image_stream(&capped);
+    let native_stream = first_image_stream(&native);
+    assert_eq!(capped_stream.len(), native_stream.len());
+    let differing: Vec<usize> = capped_stream
+        .iter()
+        .zip(native_stream.iter())
+        .enumerate()
+        .filter(|(_, (a, b))| a != b)
+        .map(|(i, _)| i)
+        .collect();
+    // JFIF APP0 density: X at bytes 14..16 and Y at 16..18 of the datastream.
+    assert!(
+        differing.iter().all(|&i| (14..18).contains(&i)),
+        "the two datastreams differ outside the JFIF density field: {differing:?}"
+    );
+}
+
+#[test]
+fn the_embedded_jpeg_reports_the_resolution_the_page_really_prints_at() {
+    // A capped page is denser than the request: the pixels did not move and
+    // the sheet got smaller. Writing 200 into the datastream would be false.
+    let bytes = jpeg(&gradient(4032, 3024), 60);
+    let pdf = image_to_pdf(
+        &bytes,
+        &OutputOptions {
+            quality: 60,
+            dpi: 200.0,
+            page_sizing: PageSizing::CapToA4,
+        },
+    )
+    .expect("renders");
+    let stream = first_image_stream(&pdf);
+    assert_eq!(&stream[6..11], b"JFIF\0");
+    assert_eq!(stream[13], 0x01, "density should be in dots per inch");
+    let density = u16::from_be_bytes([stream[14], stream[15]]);
+    assert!(
+        (365..=367).contains(&density),
+        "datastream claims {density} dpi, but the page prints at about 366"
+    );
+
+    // Without the cap it is the requested figure, because that is then true.
+    let pdf = image_to_pdf(
+        &bytes,
+        &OutputOptions {
+            quality: 60,
+            dpi: 200.0,
+            page_sizing: PageSizing::Native,
+        },
+    )
+    .expect("renders");
+    let stream = first_image_stream(&pdf);
+    assert_eq!(u16::from_be_bytes([stream[14], stream[15]]), 200);
+}
+
+#[test]
+fn the_capped_page_is_still_byte_identical_across_runs() {
+    let bytes = jpeg(&gradient(1008, 756), 60);
+    let options = OutputOptions::default();
+    assert_eq!(
+        image_to_pdf(&bytes, &options).expect("renders"),
+        image_to_pdf(&bytes, &options).expect("renders")
+    );
+}
+
+#[test]
+fn the_default_caps() {
+    // The default is the cap, so somebody who passes nothing gets an A4 page.
+    let bytes = jpeg(&gradient(1008, 756), 60);
+    let pdf = image_to_pdf(&bytes, &OutputOptions::default()).expect("renders");
+    let (width, height) = page_mm(&pdf);
+    // 1008x756 at the default 200 dpi is 128 by 96 mm, already inside A4, so
+    // the default must leave it alone rather than inflate it.
+    assert!(
+        (width - 128.0).abs() < 0.2 && (height - 96.0).abs() < 0.2,
+        "the default produced a {width}x{height} mm page"
+    );
+
+    // And at a resolution that does overflow the sheet, the default caps.
+    let pdf = image_to_pdf(
+        &bytes,
+        &OutputOptions {
+            dpi: 50.0,
+            ..OutputOptions::default()
+        },
+    )
+    .expect("renders");
+    let (width, height) = page_mm(&pdf);
+    assert!(
+        (width - 280.0).abs() < 0.2 && (height - 210.0).abs() < 0.2,
+        "the default produced a {width}x{height} mm page"
+    );
+}
+
 #[test]
 fn no_exif_and_no_gps_reaches_the_output() {
     // ADR-0002 Decision 5 makes this a named requirement rather than a
@@ -295,7 +516,12 @@ fn no_exif_and_no_gps_reaches_the_output() {
 
     for quality in [75u8, 85, 95] {
         for dpi in [150.0f32, 300.0] {
-            let pdf = image_to_pdf(&tagged, &OutputOptions { quality, dpi }).expect("renders");
+            let options = OutputOptions {
+                quality,
+                dpi,
+                ..OutputOptions::default()
+            };
+            let pdf = image_to_pdf(&tagged, &options).expect("renders");
             assert!(
                 !contains(&pdf, EXIF_HEADER),
                 "q{quality} {dpi}dpi: the output contains an Exif header"

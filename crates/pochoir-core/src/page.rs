@@ -33,6 +33,28 @@ pub struct PageGeometry {
     pub height_pt: f32,
 }
 
+/// How big the page for a bitmap input is allowed to get.
+///
+/// ADR-0006 supersedes ADR-0002 on this point for image inputs only. A page
+/// sized purely by the chosen DPI is unbounded: a 12-megapixel phone photo at
+/// 200 dpi is 512 by 384 millimetres, larger than A2, which reads as a mistake
+/// in a viewer's document properties, tiles across four sheets if anybody
+/// prints it at actual size, and is the kind of thing an upload portal that
+/// validates page size rejects without saying why.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PageSizing {
+    /// Natural size at the effective resolution, shrunk uniformly to fit an A4
+    /// sheet when it would otherwise be larger. **Never enlarged.** The
+    /// default.
+    #[default]
+    CapToA4,
+    /// Natural size at the effective resolution, however large that is.
+    ///
+    /// The opt-out, for somebody who genuinely wants the page to be the
+    /// physical size the resolution implies.
+    Native,
+}
+
 impl PageGeometry {
     /// A page sized so that `width_px` by `height_px` pixels print at
     /// `dpi_x` by `dpi_y` dots per inch.
@@ -54,6 +76,75 @@ impl PageGeometry {
             && self.height_pt.is_finite()
             && self.width_pt > 0.0
             && self.height_pt > 0.0
+    }
+
+    /// The shorter edge of an A4 sheet, 210 mm, in points.
+    ///
+    /// Written as the division rather than as `595.2756` so that the number a
+    /// reader can check — the ISO 216 millimetre figure — is the one in the
+    /// source. Both operations are exactly specified in IEEE-754, so this is
+    /// identical on wasm32 and native.
+    pub const A4_SHORT_PT: f32 = 210.0 / 25.4 * 72.0;
+
+    /// The longer edge of an A4 sheet, 297 mm, in points.
+    pub const A4_LONG_PT: f32 = 297.0 / 25.4 * 72.0;
+
+    /// Shrink uniformly until the page fits an A4 sheet, if it does not already.
+    ///
+    /// The sheet is turned to match the page, so a portrait image is capped
+    /// against portrait A4 and a landscape one against landscape A4; a square
+    /// page is bounded by the short edge either way, so the choice does not
+    /// matter and portrait is used.
+    ///
+    /// **This only ever shrinks.** Enlarging to fill the sheet would be the
+    /// same mistake in the other direction: a 600 dpi scan of an identity card
+    /// is 85.6 by 54 millimetres, and that is its true size, not a page that
+    /// needs filling. A page already inside A4 is returned untouched, and so is
+    /// a degenerate one, which has no meaningful scale factor.
+    #[must_use]
+    pub fn capped_to_a4(self) -> Self {
+        if !self.is_valid() {
+            return self;
+        }
+        let (limit_width, limit_height) = if self.width_pt > self.height_pt {
+            (Self::A4_LONG_PT, Self::A4_SHORT_PT)
+        } else {
+            (Self::A4_SHORT_PT, Self::A4_LONG_PT)
+        };
+        let scale = (limit_width / self.width_pt)
+            .min(limit_height / self.height_pt)
+            .min(1.0);
+        Self {
+            width_pt: self.width_pt * scale,
+            height_pt: self.height_pt * scale,
+        }
+    }
+
+    /// Apply a [`PageSizing`] to a natural page size.
+    #[must_use]
+    pub fn sized(self, sizing: PageSizing) -> Self {
+        match sizing {
+            PageSizing::CapToA4 => self.capped_to_a4(),
+            PageSizing::Native => self,
+        }
+    }
+
+    /// The resolution this page actually prints at, horizontally, given the
+    /// pixel width of the image on it.
+    ///
+    /// Not the same as the DPI the caller asked for once the page has been
+    /// capped: the pixels are unchanged and the sheet is smaller, so they are
+    /// packed more densely. A 12-megapixel photo requested at 200 dpi prints at
+    /// about 366. This is the honest number, and it is what goes into the
+    /// embedded JPEG's own density field.
+    #[must_use]
+    pub fn print_dpi(&self, width_px: u32) -> Option<f32> {
+        if !self.is_valid() || width_px == 0 {
+            return None;
+        }
+        let inches = self.width_pt / 72.0;
+        let dpi = width_px as f32 / inches;
+        (dpi.is_finite() && dpi > 0.0).then_some(dpi)
     }
 }
 
@@ -89,7 +180,19 @@ pub trait PageSource {
 
 #[cfg(test)]
 mod tests {
-    use super::PageGeometry;
+    use super::{PageGeometry, PageSizing};
+
+    /// Millimetres, for assertions that read like the spec they come from.
+    fn mm(geometry: PageGeometry) -> (f64, f64) {
+        (
+            f64::from(geometry.width_pt) / 72.0 * 25.4,
+            f64::from(geometry.height_pt) / 72.0 * 25.4,
+        )
+    }
+
+    fn close(actual: (f64, f64), expected: (f64, f64), tolerance: f64) -> bool {
+        (actual.0 - expected.0).abs() < tolerance && (actual.1 - expected.1).abs() < tolerance
+    }
 
     #[test]
     fn geometry_from_pixels_is_the_aspect_ratio_at_the_given_dpi() {
@@ -123,6 +226,164 @@ mod tests {
                 height_pt: 10.0,
             }
             .is_valid()
+        );
+    }
+
+    #[test]
+    fn the_a4_constants_are_iso_216() {
+        assert!((f64::from(PageGeometry::A4_SHORT_PT) - 595.275_590_5).abs() < 1e-3);
+        assert!((f64::from(PageGeometry::A4_LONG_PT) - 841.889_763_8).abs() < 1e-3);
+    }
+
+    #[test]
+    fn a_twelve_megapixel_landscape_photo_is_capped_to_landscape_a4() {
+        let natural = PageGeometry::from_pixels(4032, 3024, 200.0, 200.0);
+        assert!(close(mm(natural), (512.1, 384.0), 0.1), "{:?}", mm(natural));
+        let capped = natural.capped_to_a4();
+        assert!(close(mm(capped), (280.0, 210.0), 0.1), "{:?}", mm(capped));
+        // The short edge is exactly A4's, and the aspect ratio is untouched.
+        assert!((capped.height_pt - PageGeometry::A4_SHORT_PT).abs() < 0.01);
+        assert!(
+            (f64::from(natural.width_pt / natural.height_pt)
+                - f64::from(capped.width_pt / capped.height_pt))
+            .abs()
+                < 1e-5
+        );
+    }
+
+    #[test]
+    fn a_twelve_megapixel_portrait_photo_is_capped_to_portrait_a4() {
+        let capped = PageGeometry::from_pixels(3024, 4032, 200.0, 200.0).capped_to_a4();
+        assert!(close(mm(capped), (210.0, 280.0), 0.1), "{:?}", mm(capped));
+        assert!((capped.width_pt - PageGeometry::A4_SHORT_PT).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_square_image_is_bounded_by_the_short_edge() {
+        let capped = PageGeometry::from_pixels(3000, 3000, 200.0, 200.0).capped_to_a4();
+        assert!(close(mm(capped), (210.0, 210.0), 0.1), "{:?}", mm(capped));
+        assert_eq!(capped.width_pt, capped.height_pt);
+    }
+
+    #[test]
+    fn a_page_already_inside_a4_is_returned_untouched() {
+        // A 600 dpi scan of an identity card: 85.6 by 54 mm, its true size.
+        let natural = PageGeometry::from_pixels(2022, 1276, 600.0, 600.0);
+        assert!(close(mm(natural), (85.6, 54.0), 0.1), "{:?}", mm(natural));
+        assert_eq!(
+            natural.capped_to_a4(),
+            natural,
+            "the cap enlarged a page it should have left alone"
+        );
+    }
+
+    #[test]
+    fn a_six_hundred_dpi_a4_scan_stays_a4() {
+        // 210 mm at 600 dpi is 4960.6 px, so a real scanner writes 4961 and the
+        // page comes out a hair over A4. The cap takes that hair off and
+        // nothing more.
+        let natural = PageGeometry::from_pixels(4961, 7016, 600.0, 600.0);
+        let capped = natural.capped_to_a4();
+        assert!(close(mm(capped), (210.0, 297.0), 0.05), "{:?}", mm(capped));
+        let shrink = f64::from(capped.width_pt / natural.width_pt);
+        assert!(shrink > 0.9999, "shrank by {:.4}%", (1.0 - shrink) * 100.0);
+    }
+
+    #[test]
+    fn nothing_is_ever_enlarged() {
+        for (w, h, dpi) in [
+            (10u32, 10u32, 600.0f32),
+            (100, 2000, 600.0),
+            (2000, 100, 600.0),
+            (1, 1, 72.0),
+        ] {
+            let natural = PageGeometry::from_pixels(w, h, dpi, dpi);
+            let capped = natural.capped_to_a4();
+            assert!(
+                capped.width_pt <= natural.width_pt + 1e-3
+                    && capped.height_pt <= natural.height_pt + 1e-3,
+                "{w}x{h} at {dpi} grew from {natural:?} to {capped:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_very_long_thin_page_is_capped_by_its_long_edge() {
+        // 297 mm is the binding limit here, not 210.
+        let natural = PageGeometry::from_pixels(400, 8000, 200.0, 200.0);
+        let capped = natural.capped_to_a4();
+        // 20:1, so the long edge binds and the short edge ends up far inside
+        // A4's: the sheet is a bound, not a target.
+        assert!(close(mm(capped), (14.85, 297.0), 0.1), "{:?}", mm(capped));
+        assert!(
+            (capped.height_pt - PageGeometry::A4_LONG_PT).abs() < 0.01,
+            "height was {}",
+            capped.height_pt
+        );
+        assert!(capped.width_pt < PageGeometry::A4_SHORT_PT);
+    }
+
+    #[test]
+    fn the_sizing_mode_selects_between_them() {
+        let natural = PageGeometry::from_pixels(4032, 3024, 200.0, 200.0);
+        assert_eq!(natural.sized(PageSizing::Native), natural);
+        assert_eq!(natural.sized(PageSizing::CapToA4), natural.capped_to_a4());
+        assert_eq!(PageSizing::default(), PageSizing::CapToA4);
+    }
+
+    #[test]
+    fn a_degenerate_page_is_left_alone_rather_than_scaled_by_a_nonsense_factor() {
+        for geometry in [
+            PageGeometry {
+                width_pt: 0.0,
+                height_pt: 100.0,
+            },
+            PageGeometry {
+                width_pt: f32::NAN,
+                height_pt: 100.0,
+            },
+            PageGeometry {
+                width_pt: f32::INFINITY,
+                height_pt: 100.0,
+            },
+        ] {
+            let capped = geometry.capped_to_a4();
+            assert_eq!(
+                capped.width_pt.is_nan(),
+                geometry.width_pt.is_nan(),
+                "{geometry:?}"
+            );
+            if !geometry.width_pt.is_nan() {
+                assert_eq!(capped, geometry, "{geometry:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_print_resolution_rises_when_the_page_is_capped() {
+        let natural = PageGeometry::from_pixels(4032, 3024, 200.0, 200.0);
+        let requested = natural.print_dpi(4032).expect("valid page");
+        assert!((requested - 200.0).abs() < 0.01, "{requested}");
+        let capped = natural.capped_to_a4().print_dpi(4032).expect("valid page");
+        assert!(
+            (capped - 365.8).abs() < 0.5,
+            "capped page prints at {capped} dpi, expected about 366"
+        );
+    }
+
+    #[test]
+    fn the_print_resolution_of_a_degenerate_page_is_nothing() {
+        assert_eq!(
+            PageGeometry {
+                width_pt: 0.0,
+                height_pt: 10.0
+            }
+            .print_dpi(100),
+            None
+        );
+        assert_eq!(
+            PageGeometry::from_pixels(10, 10, 72.0, 72.0).print_dpi(0),
+            None
         );
     }
 }

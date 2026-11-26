@@ -17,6 +17,11 @@
 //!          dependencies)
 //! ```
 //!
+//! The page an image lands on keeps its aspect ratio and is sized at the
+//! effective resolution, then capped to an A4 sheet — shrunk to fit, never
+//! enlarged to fill. That cap is ADR-0006, which supersedes ADR-0002 on this
+//! point for image inputs only; [`PageSizing::Native`] opts out of it.
+//!
 //! There is **no watermark yet**: the mark of
 //! `docs/adr/0002-watermark-algorithm-and-quality-modes.md` composites onto the
 //! [`Pixmap`] that [`PageSource::rasterise`] produces, between those last two
@@ -48,7 +53,7 @@ pub mod pixmap;
 pub(crate) mod test_support;
 
 pub use image::{Image, ImagePage, decode as decode_image, sniff};
-pub use page::{PageGeometry, PageSource, RasterError};
+pub use page::{PageGeometry, PageSizing, PageSource, RasterError};
 pub use pixmap::Pixmap;
 
 /// Anything that can go wrong inside the core engine.
@@ -157,6 +162,12 @@ pub struct OutputOptions {
     pub quality: u8,
     /// Output resolution in dots per inch.
     pub dpi: f32,
+    /// Whether a bitmap input's page may exceed an A4 sheet. See ADR-0006.
+    ///
+    /// Applies to image inputs only. For a PDF input the DPI is a real
+    /// rasterisation resolution and the page is the input's own `MediaBox`, so
+    /// there is nothing here to bound.
+    pub page_sizing: PageSizing,
 }
 
 impl Default for OutputOptions {
@@ -164,6 +175,7 @@ impl Default for OutputOptions {
         Self {
             quality: DEFAULT_QUALITY,
             dpi: DEFAULT_DPI,
+            page_sizing: PageSizing::CapToA4,
         }
     }
 }
@@ -207,7 +219,14 @@ where
     for index in 0..source.page_count() {
         let geometry = source.page_geometry(index);
         source.rasterise(index, options.dpi, &mut pixmap)?;
-        let encoded = jpeg::encode(&pixmap, options.quality, options.dpi)?;
+        // The density written into the JPEG is the one the page actually
+        // prints at, not the one the caller asked for. Capping a page to A4
+        // leaves the pixels alone and shrinks the sheet, so the two differ, and
+        // writing the requested figure would be stating something untrue about
+        // the datastream. Falls back to the request only for a degenerate page,
+        // which the writer rejects a moment later anyway.
+        let density = geometry.print_dpi(pixmap.width()).unwrap_or(options.dpi);
+        let encoded = jpeg::encode(&pixmap, options.quality, density)?;
         writer.add_jpeg_page(geometry, &encoded)?;
     }
     writer.finish()
@@ -227,7 +246,7 @@ where
 pub fn image_to_pdf(bytes: &[u8], options: &OutputOptions) -> Result<Vec<u8>> {
     options.validate()?;
     let image = image::decode(bytes)?;
-    let page = ImagePage::new(image, options.dpi)?;
+    let page = ImagePage::new(image, options.dpi, options.page_sizing)?;
     render_to_pdf(&page, options)
 }
 
@@ -375,7 +394,7 @@ mod tests {
     fn bad_options_are_refused_before_any_decoding() {
         let options = OutputOptions {
             quality: 0,
-            dpi: 200.0,
+            ..OutputOptions::default()
         };
         assert_eq!(
             image_to_pdf(b"not an image", &options),

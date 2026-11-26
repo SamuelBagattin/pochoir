@@ -10,7 +10,7 @@
 //! transform, the choice of effective resolution, and the refusal to resample.
 
 use crate::exif::{self, Metadata, Orientation};
-use crate::page::{PageGeometry, PageSource, RasterError};
+use crate::page::{PageGeometry, PageSizing, PageSource, RasterError};
 use crate::pixmap::{MAX_PIXELS, Pixmap};
 use crate::{Error, Result};
 
@@ -310,6 +310,7 @@ pub struct ImagePage {
     image: Image,
     dpi_x: f32,
     dpi_y: f32,
+    sizing: PageSizing,
 }
 
 impl ImagePage {
@@ -324,12 +325,15 @@ impl ImagePage {
     /// still honoured, and the page is never larger than the requested DPI
     /// implies.
     ///
+    /// `sizing` decides whether the resulting page may be larger than an A4
+    /// sheet; see [`PageSizing`] and ADR-0006.
+    ///
     /// # Errors
     ///
     /// Returns [`Error::InvalidParameter`] if `requested_dpi` is not a finite
     /// positive number, or [`Error::UnsupportedFormat`] if the image has no
     /// pixels.
-    pub fn new(image: Image, requested_dpi: f32) -> Result<Self> {
+    pub fn new(image: Image, requested_dpi: f32, sizing: PageSizing) -> Result<Self> {
         if !requested_dpi.is_finite() || requested_dpi <= 0.0 {
             return Err(Error::InvalidParameter { name: "dpi" });
         }
@@ -345,6 +349,7 @@ impl ImagePage {
         Ok(Self {
             dpi_x: effective(x),
             dpi_y: effective(y),
+            sizing,
             image,
         })
     }
@@ -355,10 +360,22 @@ impl ImagePage {
         &self.image
     }
 
-    /// The resolution the page is sized at, per axis.
+    /// The resolution the **natural** page size is derived from, per axis,
+    /// before any A4 cap is applied.
+    ///
+    /// This is not necessarily what the page prints at. Capping shrinks the
+    /// sheet without touching a pixel, so a capped page is denser than this
+    /// number says; [`PageGeometry::print_dpi`] on the result of
+    /// [`PageSource::page_geometry`] gives the honest figure.
     #[must_use]
     pub const fn effective_dpi(&self) -> (f32, f32) {
         (self.dpi_x, self.dpi_y)
+    }
+
+    /// How this page's size is bounded.
+    #[must_use]
+    pub const fn sizing(&self) -> PageSizing {
+        self.sizing
     }
 }
 
@@ -370,6 +387,7 @@ impl PageSource for ImagePage {
     fn page_geometry(&self, _index: usize) -> PageGeometry {
         let pixmap = self.image.pixmap();
         PageGeometry::from_pixels(pixmap.width(), pixmap.height(), self.dpi_x, self.dpi_y)
+            .sized(self.sizing)
     }
 
     fn rasterise(
@@ -391,7 +409,7 @@ impl PageSource for ImagePage {
 #[cfg(test)]
 mod tests {
     use super::{Format, ImagePage, decode, expand_to_rgba, sniff};
-    use crate::page::PageSource;
+    use crate::page::{PageSizing, PageSource};
     use crate::pixmap::Pixmap;
     use crate::{Error, test_support};
 
@@ -474,7 +492,7 @@ mod tests {
         let jpeg = crate::jpeg::encode(&pixmap, 95, 200.0).expect("encodes");
         let image = decode(&jpeg).expect("decodes");
         let expected = image.pixmap().clone();
-        let page = ImagePage::new(image, 200.0).expect("one page");
+        let page = ImagePage::new(image, 200.0, PageSizing::default()).expect("one page");
         assert_eq!(page.page_count(), 1);
         let mut out = Pixmap::empty();
         page.rasterise(0, 200.0, &mut out).expect("rasterises");
@@ -494,7 +512,7 @@ mod tests {
         // EXIF resolution at all and the requested DPI applies directly.
         let image = decode(&jpeg).expect("decodes");
         assert_eq!(image.source_dpi(), (None, None));
-        let page = ImagePage::new(image, 200.0).expect("one page");
+        let page = ImagePage::new(image, 200.0, PageSizing::default()).expect("one page");
         assert_eq!(page.effective_dpi(), (200.0, 200.0));
         let geometry = page.page_geometry(0);
         assert_eq!(geometry.width_pt, 400.0 / 200.0 * 72.0);
@@ -507,7 +525,7 @@ mod tests {
         let jpeg = crate::jpeg::encode(&pixmap, 85, 200.0).expect("encodes");
         let image = decode(&jpeg).expect("decodes");
         assert!(matches!(
-            ImagePage::new(image, 0.0),
+            ImagePage::new(image, 0.0, PageSizing::default()),
             Err(Error::InvalidParameter { name: "dpi" })
         ));
     }

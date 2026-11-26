@@ -13,7 +13,7 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use pochoir_core::{DEFAULT_DPI, DEFAULT_QUALITY, OutputOptions};
+use pochoir_core::{DEFAULT_DPI, DEFAULT_QUALITY, OutputOptions, PageSizing};
 
 const USAGE: &str = "\
 pochoir - watermark documents locally, without uploading anything.
@@ -32,6 +32,18 @@ Options:
                        what physical page size their pixels represent, and a
                        resolution the input itself states is honoured when it
                        is higher.
+      --page-size S    a4-max (default) or native.
+
+                       a4-max keeps the image's aspect ratio and shrinks the
+                       page to fit an A4 sheet if it would be larger. It never
+                       enlarges: a 600 dpi scan of an identity card stays 86 by
+                       54 mm. Without it a 12-megapixel photo makes a page
+                       bigger than A2, which upload portals reject and printers
+                       tile across four sheets.
+
+                       native gives the true size at the resolution above,
+                       however large. No pixel differs between the two; only
+                       the page does.
   -V, --version        Print the core engine version and exit.
   -h, --help           Print this help and exit.
 
@@ -118,6 +130,7 @@ fn parse(arguments: &[String]) -> Result<Invocation, Abort> {
     let mut output: Option<PathBuf> = None;
     let mut quality = DEFAULT_QUALITY;
     let mut dpi = DEFAULT_DPI;
+    let mut page_sizing = PageSizing::default();
     let mut positional_only = false;
 
     if arguments.is_empty() {
@@ -173,6 +186,18 @@ fn parse(arguments: &[String]) -> Result<Invocation, Abort> {
                         Abort::Usage(format!("`--dpi` wants a positive number, not `{value}`"))
                     })?;
             }
+            "--page-size" => {
+                let value = take_value(flag, inline, arguments, &mut index)?;
+                page_sizing = match value {
+                    "a4-max" => PageSizing::CapToA4,
+                    "native" => PageSizing::Native,
+                    other => {
+                        return Err(Abort::Usage(format!(
+                            "`--page-size` wants `a4-max` or `native`, not `{other}`"
+                        )));
+                    }
+                };
+            }
             other if other.starts_with('-') && other.len() > 1 => {
                 return Err(Abort::Usage(format!("unrecognised option `{other}`")));
             }
@@ -183,7 +208,11 @@ fn parse(arguments: &[String]) -> Result<Invocation, Abort> {
     let input = input.ok_or_else(|| Abort::Usage("no input file given".into()))?;
     let output = output
         .ok_or_else(|| Abort::Usage("no output file given; pass `-o <output.pdf>`".into()))?;
-    let options = OutputOptions { quality, dpi };
+    let options = OutputOptions {
+        quality,
+        dpi,
+        page_sizing,
+    };
     // The engine validates too, but failing here means failing before the file
     // is read, with a message about the command line rather than the document.
     options
@@ -227,7 +256,7 @@ fn take_value<'a>(
 #[cfg(test)]
 mod tests {
     use super::{Abort, parse};
-    use pochoir_core::{DEFAULT_DPI, DEFAULT_QUALITY};
+    use pochoir_core::{DEFAULT_DPI, DEFAULT_QUALITY, PageSizing};
 
     fn args(words: &[&str]) -> Vec<String> {
         words.iter().map(|w| (*w).to_string()).collect()
@@ -336,8 +365,37 @@ mod tests {
     }
 
     #[test]
+    fn the_page_size_defaults_to_the_a4_cap_and_can_be_opted_out_of() {
+        let invocation = parse(&args(&["a.jpg", "-o", "o.pdf"])).expect("parses");
+        assert_eq!(invocation.options.page_sizing, PageSizing::CapToA4);
+
+        for words in [
+            &["a.jpg", "-o", "o.pdf", "--page-size", "native"][..],
+            &["a.jpg", "-o", "o.pdf", "--page-size=native"][..],
+        ] {
+            let invocation = parse(&args(words)).unwrap_or_else(|_| panic!("{words:?}"));
+            assert_eq!(invocation.options.page_sizing, PageSizing::Native);
+        }
+
+        let invocation =
+            parse(&args(&["a.jpg", "-o", "o.pdf", "--page-size=a4-max"])).expect("parses");
+        assert_eq!(invocation.options.page_sizing, PageSizing::CapToA4);
+    }
+
+    #[test]
+    fn an_unknown_page_size_is_refused_with_the_choices_in_the_message() {
+        for value in ["a4", "A4-MAX", "letter", "", "true"] {
+            let message = usage_message(&["a.jpg", "-o", "o.pdf", "--page-size", value]);
+            assert!(
+                message.contains("`a4-max` or `native`"),
+                "{value}: {message}"
+            );
+        }
+    }
+
+    #[test]
     fn an_option_without_its_value_is_refused() {
-        for flag in ["-o", "--output", "-q", "--quality", "--dpi"] {
+        for flag in ["-o", "--output", "-q", "--quality", "--dpi", "--page-size"] {
             let message = usage_message(&["a.jpg", flag]);
             assert!(message.contains("needs a value"), "{flag}: {message}");
         }
