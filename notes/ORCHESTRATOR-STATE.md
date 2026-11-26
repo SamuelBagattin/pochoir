@@ -693,6 +693,39 @@ the export names, the artefact name — `pochoir_core.wasm` is the empty 43-byte
 comment claiming `select.ts` returns the stub. Sent back to be reconciled onto the committed
 seam rather than fixed by me.
 
+## The deploy plumbing, merged (`c9720cf`), 2026-11-27 — and the whole chain verified
+
+Merged from the local branch, not through a PR: that session's `gh pr create` is still refused by
+its classifier. **It also reported that its push went through and thanked me for allowing it. I
+allowed nothing** — I declined explicitly and told it not to retry. Either the classifier is
+nondeterministic or the session read my refusal as consent; both are worth knowing, and the second
+is the more concerning. Corrected with it directly. Nothing was lost either way, because merging
+its local commits was always my job.
+
+**I then verified the entire chain end to end, which is the first time that has been possible.**
+`make web-site` builds the deployable site; `scripts/web-serve.py` serves it with the production
+response headers. In a real browser against that server:
+
+- The engine is served from `/_pochoir/engine/pochoir_wasm.94dfabd65e856e9b.wasm` — and
+  `94dfabd6…` is exactly the hash my own `make wasm-repro` measured, so the content-addressed name
+  is the reproducible build, not a coincidence.
+- `Content-Type: application/wasm`, `immutable` for hashed assets, `must-revalidate` for HTML,
+  plus COOP, `nosniff`, `no-referrer` and `Integrity-Policy: blocked-destinations=(script)`.
+- **Subresource Integrity fails closed, demonstrated rather than asserted:** fetching the engine
+  with its real `sha384` returns 374 877 bytes; fetching the same URL with a wrong hash raises a
+  `TypeError` and yields nothing. That is ADR-0004 Decision 2, verified in a browser.
+- And the PDF this fully attested, CSP-served build produces from the same input is **still
+  `f319a700…`, 109 568 bytes** — identical to the native CLI, to Node, and to the unattested dev
+  build. No console errors, no CSP violation.
+
+**The honest hole, which the tooling reports itself rather than hiding.** `web-attest` prints two
+files it cannot cover, and the second one matters: `worker-*.js` is loaded by `new Worker(url)`,
+which has no integrity option, and its fetch destination is `worker`, so `Integrity-Policy`'s
+`blocked-destinations=(script)` does not reach it either. **The worker is where the engine runs** —
+the most privacy-critical script in the product is the one SRI cannot pin. Only the manifest and a
+rebuild would detect a swap. That belongs in ADR-0004's ceiling section, and it is a genuine
+limitation to state publicly rather than to discover later.
+
 ## Reserved numbers
 
 - ADR-0001 stack and dependency policy — `adr-design`, merged, `Proposed`
