@@ -126,9 +126,21 @@ names the ADR requirement.
    gnu.org / apache.org / spdx.org myself: AGPL byte-identical, Apache and MIT differing only in
    the copyright line. ADRs 0001–0003 now `Accepted`. Binary is `pochoir`. Per-crate guard live
    and passing on merged `main`.
-4. **Open:** `licence-rename` follow-up — ADR-0005 (licensing, superseding ADR-0001's licensing
-   recommendation in that respect only) and the CI `on: push` branch filter. Docs and CI only.
-5. **Proposed, not started:** `core-write-path` (task_f7faf84f) — engine phase 1, image in → PDF
+4. ~~PR #2 `licence-rename` follow-up~~ — merged as `80de01f`. ADR-0005 Licensing is `Accepted`
+   and supersedes ADR-0001 in that respect only; `LICENSE.md` and `CLAUDE.md` point at it. CI
+   `push` is now filtered to `main`: verified, that branch produced exactly one run where PR #1
+   produced two for one commit. ADR-0005 added a cost I had not stated and should have: **a hosted
+   competitor can take the engine, the hard and valuable part, write its own front end and owe
+   nothing** — §13's reach really is narrower under the split than under AGPL throughout. Its
+   revisit trigger: if nobody has embedded `pochoir-core` within a year, the permissive half bought
+   nothing.
+5. **Open:** `licence-rename` follow-up 3 — write the ten answered open questions back into
+   ADR-0001/0002/0003 and tick them. My bookkeeping failure: I settled six on 2026-11-24..26 and
+   recorded them only in this file, so the ADRs still say "Needs decision from Samuel" for
+   decisions the orchestrator took. Also correcting any stale 89/99 crate figures in ADR-0003 and
+   allowing an open question to be closed in place after acceptance when the answer does not change
+   the decision.
+6. **Proposed, not started:** `core-write-path` (task_f7faf84f) — engine phase 1, image in → PDF
    out, no watermark. The harness refused a direct start because that turn was triggered by
    another session's message, so it is a card awaiting Samuel's click.
 
