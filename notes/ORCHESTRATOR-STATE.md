@@ -665,6 +665,34 @@ HTML referencing them, and a missing manifest is a build error rather than a bla
 - No RGAA audit. AA-by-construction plus checks, which the session states plainly.
 - `make check` does not yet cover `web/` — `deploy-plumbing` is still running.
 
+## The deploy session, and a push I declined to arrange, 2026-11-27
+
+`deploy-plumbing` finished its work and its `git push` was refused by its own permission
+classifier — **the third time this project's classifier has blocked an ordinary git operation for
+a sub-session** (after `git commit -F`, `--amend` and `push -u` in phase 2). It stopped and asked
+me to allow the push.
+
+**I declined, and the reasoning matters more than the outcome.** A permission denial in another
+session is not mine to lift, and one peer asking another to perform a blocked action is the
+pattern both our instruction sets name and refuse. It was also unnecessary: on this project I am
+the one who merges, the commits are on a local branch in this checkout, and no PR is required for
+me to take them. Logged for Samuel as a configuration cost, not worked around.
+
+I reviewed the branch locally before deciding. **No credentials anywhere** — only references to
+GitHub secrets that do not exist and an env-var check that refuses early. The deploy workflow is
+`workflow_dispatch` only, with a typed `deploy` confirmation, a `production` environment and no
+push, tag or schedule trigger, so merging it cannot cause a deployment. Its header gives the right
+reason: automating a deploy on merge would mean the repository, rather than the maintainer,
+decides when the bytes a visitor executes change.
+
+**One collision, and it is my fault for briefing two sessions in parallel.** The deploy session
+built `web/src/engine/wasm-build.ts` with `WASM_URL`/`WASM_INTEGRITY` pointing at
+`pochoir_core.wasm`; the integration landed `engine-manifest.ts` with `ENGINE_URL`/
+`ENGINE_INTEGRITY` pointing at `pochoir_wasm.wasm`. Its file predates `15cb7ea` and is stale in
+the export names, the artefact name — `pochoir_core.wasm` is the empty 43-byte module — and in a
+comment claiming `select.ts` returns the stub. Sent back to be reconciled onto the committed
+seam rather than fixed by me.
+
 ## Reserved numbers
 
 - ADR-0001 stack and dependency policy — `adr-design`, merged, `Proposed`
