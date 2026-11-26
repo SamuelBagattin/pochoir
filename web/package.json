@@ -1,0 +1,20 @@
+{
+  "name": "pochoir-web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-or-later",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "check": "astro check"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.12",
+    "@astrojs/svelte": "^9.1.6",
+    "astro": "^7.4.13",
+    "svelte": "^5.59.2",
+    "typescript": "^5.9.3"
+  }
+}

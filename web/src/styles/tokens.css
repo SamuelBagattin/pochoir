@@ -1,0 +1,58 @@
+/*
+ * Design tokens. The reasoning, the references they came from and the measured
+ * contrast ratios are in web/DESIGN.md. Do not add a token here without adding
+ * it there — a value with no recorded reason is how a system becomes a mess.
+ */
+
+:root {
+  /* --- Colour: a warm neutral ramp (hue ~40deg, very low chroma) ---------- */
+  --c-paper: #fbfaf7;   /* page background                                   */
+  --c-panel: #ffffff;   /* raised surface                                    */
+  --c-sunken: #f1eee9;  /* recessed: the stage behind the document           */
+  --c-inset: #e7e2da;   /* deeper recess: empty drop target, slider track    */
+
+  --c-line: #ddd7cd;    /* decorative rule. 1.37:1 - never a control edge    */
+  --c-edge: #8f8678;    /* control boundary. 3.44:1 on paper (WCAG 1.4.11)   */
+
+  --c-ink-3: #6e675c;   /* tertiary text.  5.35:1 on paper                   */
+  --c-ink-2: #4a443b;   /* secondary text. 9.22:1 on paper                   */
+  --c-ink-1: #1c1a15;   /* primary text and primary button. 16.66:1          */
+
+  /* The single accent: the red-brown of a rubber stamp, which is what this
+   * tool makes. 5.73:1 on paper. Used for the stencil mark, the watermark's
+   * own affordances and error text. Never a button fill.                    */
+  --c-mark: #b23a17;
+
+  /* --- Type -------------------------------------------------------------- */
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+
+  --t-display: 2.5rem;   /* 40px / 44 / -0.01em */
+  --t-h2: 1.625rem;      /* 26px / 32 / -0.01em */
+  --t-h3: 1.1875rem;     /* 19px / 26 */
+  --t-body: 1rem;        /* 16px / 25 - prose never goes below this */
+  --t-sm: 0.875rem;      /* 14px / 21 */
+  --t-label: 0.8125rem;  /* 13px / 16 - mono */
+  --t-micro: 0.75rem;    /* 12px / 16 - mono, uppercase */
+
+  /* --- Space: 4px base, nine steps, nothing outside the scale ------------ */
+  --s-1: 0.25rem;
+  --s-2: 0.5rem;
+  --s-3: 0.75rem;
+  --s-4: 1rem;
+  --s-5: 1.5rem;
+  --s-6: 2rem;
+  --s-7: 3rem;
+  --s-8: 4rem;
+  --s-9: 6rem;
+
+  /* --- Shape: two radii, no exceptions, no shadows ----------------------- */
+  --r-1: 3px;  /* controls   */
+  --r-2: 6px;  /* containers */
+
+  --control-h: 2.5rem; /* 40px */
+  --rail-w: 22.5rem;   /* 360px */
+  --measure: 68ch;
+}
