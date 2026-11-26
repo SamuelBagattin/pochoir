@@ -1,6 +1,6 @@
 # ADR-0002: Watermark algorithm and output quality modes
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-26
 - **Deciders:** Samuel Bagattin
 - **Supersedes:** none

@@ -41,3 +41,4 @@ The repository is <https://github.com/SamuelBagattin/pochoir>. The local folder 
 
 - `docs/adr/` holds the architecture decision records.
 - Anything non-obvious gets one: a dependency, a file format choice, a rendering approach, a hosting decision.
+- ADR-0001, ADR-0002 and ADR-0003 are **Accepted** as of 2026-11-26 and are binding; a divergence between the code and an accepted ADR is a bug in one or the other. ADR-0004 is reserved for build reproducibility and bundle attestation, and is not written yet.

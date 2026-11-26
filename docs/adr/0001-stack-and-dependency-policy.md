@@ -1,6 +1,6 @@
 # ADR-0001: Stack and dependency policy
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-26
 - **Deciders:** Samuel Bagattin
 - **Supersedes:** none

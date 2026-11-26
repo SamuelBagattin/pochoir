@@ -1,6 +1,6 @@
 # ADR-0003: PDF input rasterisation
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-26
 - **Deciders:** Samuel Bagattin
 - **Supersedes:** none
