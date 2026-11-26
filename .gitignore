@@ -1,0 +1,17 @@
+# Rust
+/target
+**/*.rs.bk
+
+# Node / Astro
+node_modules
+dist
+.astro
+
+# macOS
+.DS_Store
+
+# Claude Code session state and the git worktrees it creates in-repo
+/.claude/
+
+# Local scratch space for sessions working on this repo
+/notes/local/
