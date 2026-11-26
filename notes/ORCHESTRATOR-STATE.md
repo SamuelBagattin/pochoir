@@ -46,14 +46,26 @@ large scanned PDFs are a WASM memory risk; SEO against a gouv.fr domain is hard;
 - **No AI attribution in commits or PR descriptions, ever.**
 - Sessions never deploy, never touch production or secrets, never push, never open PRs.
 
-## Repository
+## Name and repository
 
-- Path: `~/dev/samuelbagattin/filigrane`, branch `main`, `e8428a1 chore: initialise repository`
-  (empty commit).
-- **No git remote yet.** Sessions commit to their worktree branch; I merge locally.
-- Public/private GitHub repo: **undecided, waiting on Samuel.**
-- Public product name and domain: **undecided, waiting on Samuel.** Local workspace name is
-  `filigrane`; renaming a crate before publication is cheap.
+- **The product is called Pochoir.** Domain `pochoir.app` (available as of 2026-11-26, not yet
+  registered — that is Samuel's purchase to make, along with `lepochoir.fr` / `aupochoir.fr` if he
+  wants a French domain; `pochoir.fr` itself is parked by a squatter).
+  The metaphor is the algorithm: spray through a stencil and the paint is *in* the paper. That is
+  our one technical commitment — the mark is burned into the pixels, not a removable overlay.
+- Rejected along the way: `filigrane.app` (registered 2026-06-12 and dormant, and on my advice the
+  name implies state endorsement and frames us as the knock-off), Tramage (too obscure even for a
+  French native), Sauf-conduit / Antivol / Apposer (all available, passed over on taste).
+- **Repo: https://github.com/SamuelBagattin/pochoir, public, default branch `main`.** Note the
+  account's canonical casing is `SamuelBagattin`; the lowercase URL redirects.
+- `main` is pushed and **the first CI run passed in 22s** (run 45877822956), so the workflow is
+  verified against GitHub, not just locally.
+- Sessions still must not push and must not open PRs. They commit to their branch; I merge and
+  push.
+- **Not renamed yet, on purpose:** the folder is still `~/dev/samuelbagattin/filigrane` and the
+  crates are still `filigrane-core` / `filigrane-cli`. The rename is folded into the first
+  implementation session so it lands as one clean commit instead of churn across live branches.
+  `adr-design` has been told to write "Pochoir" in ADR prose while citing the existing identifiers.
 
 ## Live sub-sessions
 
@@ -145,9 +157,15 @@ the one unavoidable dependency and goes behind a trait plus a lazily-loaded modu
 
 ## Waiting on Samuel
 
-1. Public product name and domain (`filigrane` belongs to the government service).
-2. Public or private GitHub repo under `samuelbagattin`, and when to create the remote.
-3. Licence — `adr-design` will recommend one in ADR-0001; the choice is his.
+1. ~~Product name~~ — **Pochoir**, decided 2026-11-26.
+2. ~~Public or private repo~~ — **public**, created and pushed 2026-11-26.
+3. **Registering `pochoir.app`** — his purchase, not mine to make. Availability was verified, not
+   reserved, so it can go at any time.
+4. **Licence** — `adr-design` will recommend one in ADR-0001; the choice is his. `Cargo.toml` says
+   `license = "UNLICENSED"` with a TODO and there is no `LICENSE` file. This matters more now that
+   the repo is public: code with no licence is "all rights reserved" by default, which contradicts
+   the public-good framing.
+5. **Approving the ADRs** before any implementation session starts.
 
 ## Carried forward from merge 1
 
@@ -165,7 +183,10 @@ the one unavoidable dependency and goes behind a trait plus a lazily-loaded modu
 
 ## Backlog (not yet briefed)
 
-- `filigrane-core` MVP: image in → watermarked PDF out, golden-image tests, CLI.
+- **Rename `filigrane-*` → `pochoir-*`** (crates, `CLAUDE.md`, doc comments, workspace metadata,
+  and the `repository` field now that a remote exists). Folded into the first implementation
+  session, not a session of its own.
+- `pochoir-core` MVP: image in → watermarked PDF out, golden-image tests, CLI.
 - WASM bindings + Astro UI with live preview.
 - Metadata stripping.
 - N-in-N-out and zip output.
