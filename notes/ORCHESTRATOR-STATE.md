@@ -198,6 +198,34 @@ a compelled maintainer holds every key. What a published hash changes is what ca
 *quietly*. The session looked for a legal argument that published hashes constrain a compelled
 code-change order and found none — the defensible claim is purely technical.
 
+## Samuel's answers, 2026-11-26 (asked directly)
+
+1. **Next after phase 2: the web UI.** Astro + Svelte islands, wasm bindings, drag a photo in and
+   get a watermarked PDF out. Everything so far is invisible, and the UI forces ADR-0004's
+   constraints to be resolved while they are still cheap.
+2. **No code-signing key.** Publish hashes to a GitHub release and anchor trust where we already
+   anchor it. A key we hold is a key that can be compelled or stolen, and it would imply a
+   guarantee ADR-0004 says plainly we cannot give. **This closes ADR-0004's open question 2 — and
+   it must be written into ADR-0004, not left here.** Bundle it with the next docs change rather
+   than spawning a session for one checkbox. The ADR stays `Proposed`: the manifest location, the
+   deploy token, the ceiling wording, the Linux measurement and the COEP question are all still
+   open.
+3. **Deployment: register the domain when the website MVP is usable.** So `pochoir.app` is not
+   bought yet, deployment is a real goal rather than a maybe, and the trigger is mine to call —
+   **I must tell him the moment the MVP is genuinely usable**, because the domain is still
+   unreserved and someone else can take it. No deployment work is briefed until then, but
+   ADR-0004's constraints stay respected in code so nothing needs retrofitting.
+4. **French first**, with the strings structured for i18n from day one so English is an addition
+   rather than a rewrite. The beachhead is France, the search traffic is French, and the mark
+   presets (location, banque, mutuelle) are French administrative concepts.
+
+### Consequence for the UI brief
+
+The UI session cannot start until phase 2 merges — the wasm binding crate lives in `crates/`,
+which phase 2 owns. An Astro shell in a new `web/` directory would not conflict, but the live
+preview is the heart of the UI and needs the bindings, so a shell built first would be mostly
+layout. Samuel said "after phase 2 lands"; respect that.
+
 ## Reserved numbers
 
 - ADR-0001 stack and dependency policy — `adr-design`, merged, `Proposed`
