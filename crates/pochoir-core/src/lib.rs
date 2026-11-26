@@ -36,7 +36,9 @@
 
 use core::fmt;
 
+pub mod exif;
 pub mod fingerprint;
+pub mod image;
 pub mod jpeg;
 pub mod page;
 pub mod pdf;
@@ -45,6 +47,7 @@ pub mod pixmap;
 #[cfg(test)]
 pub(crate) mod test_support;
 
+pub use image::{Image, ImagePage, decode as decode_image, sniff};
 pub use page::{PageGeometry, PageSource, RasterError};
 pub use pixmap::Pixmap;
 
@@ -182,6 +185,52 @@ impl OutputOptions {
     }
 }
 
+/// Render every page of a [`PageSource`] into one PDF.
+///
+/// One pixmap is allocated and reused for every page, which is the memory model
+/// `docs/adr/0003-pdf-input-rasterisation.md` requires: rasterise into one
+/// buffer, encode, append the encoded page to the output, move on. Peak live
+/// memory is one page's pixels plus the output, not the whole document's.
+///
+/// # Errors
+///
+/// Returns whatever the source, the encoder or the writer rejected; in
+/// particular [`Error::InvalidParameter`] for bad options and
+/// [`Error::UnsupportedFormat`] for a source with no pages.
+pub fn render_to_pdf<S>(source: &S, options: &OutputOptions) -> Result<Vec<u8>>
+where
+    S: PageSource + ?Sized,
+{
+    options.validate()?;
+    let mut writer = pdf::PdfWriter::new();
+    let mut pixmap = Pixmap::empty();
+    for index in 0..source.page_count() {
+        let geometry = source.page_geometry(index);
+        source.rasterise(index, options.dpi, &mut pixmap)?;
+        let encoded = jpeg::encode(&pixmap, options.quality, options.dpi)?;
+        writer.add_jpeg_page(geometry, &encoded)?;
+    }
+    writer.finish()
+}
+
+/// Decode a JPEG or PNG and write it out as a one-page PDF.
+///
+/// The whole write path, end to end. Output is a pure function of
+/// `(bytes, options)`: no clock is read, no random number is drawn, and the
+/// input's metadata is dropped structurally because the pixels are re-encoded.
+///
+/// # Errors
+///
+/// Returns [`Error::UnsupportedFormat`] for input that is neither a JPEG nor a
+/// PNG, [`Error::Decode`] if the decoder refused it, and
+/// [`Error::InvalidParameter`] for bad options.
+pub fn image_to_pdf(bytes: &[u8], options: &OutputOptions) -> Result<Vec<u8>> {
+    options.validate()?;
+    let image = image::decode(bytes)?;
+    let page = ImagePage::new(image, options.dpi)?;
+    render_to_pdf(&page, options)
+}
+
 /// Version of the core engine, as declared in its `Cargo.toml`.
 ///
 /// Reported by the CLI and the wasm bindings so a user can tell which engine
@@ -201,7 +250,9 @@ pub fn version() -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{DEFAULT_DPI, DEFAULT_QUALITY, Error, OutputOptions, version};
+    use super::{
+        DEFAULT_DPI, DEFAULT_QUALITY, Error, OutputOptions, image_to_pdf, test_support, version,
+    };
 
     #[test]
     fn version_is_a_semver_triple() {
@@ -297,5 +348,38 @@ mod tests {
                 Err(Error::InvalidParameter { name: "dpi" })
             );
         }
+    }
+
+    #[test]
+    fn the_write_path_runs_end_to_end() {
+        let jpeg = test_support::jpeg_of(test_support::gradient(40, 60));
+        let pdf = image_to_pdf(&jpeg, &OutputOptions::default()).expect("renders");
+        assert!(pdf.starts_with(b"%PDF-"));
+        assert!(pdf.ends_with(b"%%EOF\n"));
+        let text = String::from_utf8_lossy(&pdf);
+        assert!(text.contains("/Filter /DCTDecode"));
+        assert!(text.contains("/Count 1"));
+    }
+
+    #[test]
+    fn the_write_path_is_byte_identical_across_runs() {
+        let jpeg = test_support::jpeg_of(test_support::gradient(40, 60));
+        let options = OutputOptions::default();
+        assert_eq!(
+            image_to_pdf(&jpeg, &options).expect("renders"),
+            image_to_pdf(&jpeg, &options).expect("renders")
+        );
+    }
+
+    #[test]
+    fn bad_options_are_refused_before_any_decoding() {
+        let options = OutputOptions {
+            quality: 0,
+            dpi: 200.0,
+        };
+        assert_eq!(
+            image_to_pdf(b"not an image", &options),
+            Err(Error::InvalidParameter { name: "quality" })
+        );
     }
 }
