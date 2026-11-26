@@ -147,7 +147,7 @@ names the ADR requirement.
    decision; does stop it resurfacing later as "the ADR said we had a mitigation".
    **Lesson for me:** a decision recorded only in this file is a decision the next session cannot
    find. Record orchestrator decisions in the governing document, not just here.
-6. **Proposed, not started:** `core-write-path` (task_f7faf84f) — engine phase 1, image in → PDF
+6. **Running:** `core-write-path` — engine phase 1, session `local_79c8214b-fbda-4eb6-adc4-d0f6590b8dbe` (started 2026-11-26 on Samuel's word; the earlier card was task_f7faf84f) — engine phase 1, image in → PDF
    out, no watermark. The harness refused a direct start because that turn was triggered by
    another session's message, so it is a card awaiting Samuel's click.
 
