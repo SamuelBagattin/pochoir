@@ -134,12 +134,19 @@ names the ADR requirement.
    nothing** — §13's reach really is narrower under the split than under AGPL throughout. Its
    revisit trigger: if nobody has embedded `pochoir-core` within a year, the permissive half bought
    nothing.
-5. **Open:** `licence-rename` follow-up 3 — write the ten answered open questions back into
-   ADR-0001/0002/0003 and tick them. My bookkeeping failure: I settled six on 2026-11-24..26 and
-   recorded them only in this file, so the ADRs still say "Needs decision from Samuel" for
-   decisions the orchestrator took. Also correcting any stale 89/99 crate figures in ADR-0003 and
-   allowing an open question to be closed in place after acceptance when the answer does not change
-   the decision.
+5. ~~PR #3 `licence-rename` follow-up 3~~ — merged as `e000ca4`. All ten open questions closed in
+   place with the decider named, the original question text re-added verbatim under *As raised:* so
+   the diff is provably lossless, and the README now allows closing in place only when the answer
+   does not change the decision. The only unticked box left under `docs/adr/` is in the template.
+   **It declined the conditional correction I asked for, and it was right**: ADR-0001's remaining
+   `88` is its own deliberate citation of the wrong figure — the worked example itself — and
+   ADR-0003's `89` is a Firefox version. Declining and flagging beats complying.
+   It also recorded a cost unprompted: ADR-0002's risk table lists `overlay` as part of the
+   mitigation for the accessibility regression, so deferring `overlay` past v1 leaves that
+   mitigation weaker in v1 than the table implies — UI disclosure alone. Does not reverse the
+   decision; does stop it resurfacing later as "the ADR said we had a mitigation".
+   **Lesson for me:** a decision recorded only in this file is a decision the next session cannot
+   find. Record orchestrator decisions in the governing document, not just here.
 6. **Proposed, not started:** `core-write-path` (task_f7faf84f) — engine phase 1, image in → PDF
    out, no watermark. The harness refused a direct start because that turn was triggered by
    another session's message, so it is a card awaiting Samuel's click.
