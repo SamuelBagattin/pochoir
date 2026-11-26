@@ -319,8 +319,8 @@ code-change order and found none — the defensible claim is purely technical.
 | session | id | owns |
 |---|---|---|
 | ~~engine~~ | `local_79c8214b-fbda-4eb6-adc4-d0f6590b8dbe` | **rotated out at 500k**; wrote `phase2-handover.md` (347 lines) and stood down |
-| phase2-mark | proposed, `task_8dc04234` | `crates/`, `scripts/`, `docs/adr/0007-*` |
-| adr-0004-attestation | `local_082f38c0-9661-4149-b091-797afa5b08a3` | `docs/adr/0004-*` and its one row in `docs/adr/README.md` |
+| phase2-mark | `local_fb5b2705-27b3-4196-86e8-68a2a0ac87f5` — **running** | `crates/`, `scripts/`, `docs/adr/0007-*` |
+| ~~adr-0004-attestation~~ | `local_082f38c0-9661-4149-b091-797afa5b08a3` | done, PR #6 merged as `17ba5d6` |
 
 Only shared file is the ADR index README, one row each — a trivial conflict I resolve at merge.
 ~~Phase 2 waits for the A4 PR~~ — PR #5 merged as `a5048ad`, phase 2 briefed to the same session.
