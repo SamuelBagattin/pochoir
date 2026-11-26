@@ -616,6 +616,55 @@ document; today the CLI warns and the browser cannot.
 `wasm-bindings` stood down at 345k with its task complete — the rotation rule applied at a clean
 boundary rather than pushed through. Handover in `wasm-bindings-handover.md`.
 
+## THE MVP WORKS (`15cb7ea`), 2026-11-27
+
+**A photograph goes into a browser and a watermarked PDF comes out, and nothing leaves the
+device.** That is the product. PR #12 replaced the stub with the real module.
+
+**The decisive measurement, and it could not be stronger.** I served the build, fed it through the
+real file input the *same* PNG the native CLI was given, set the same mark text, clicked
+*Télécharger le PDF* and hashed the blob the page produced: **109 568 bytes, sha256
+`f319a700…` — byte-identical to the CLI's output and to the module driven from Node.** Three
+paths, one artefact: native aarch64, wasm under Node, wasm in a browser Web Worker. ADR-0002's
+cross-target determinism went from "unwired, half-tested" to demonstrated end to end in one night.
+
+Also verified in the browser rather than read: the stub is absent from the bundle (nothing imports
+`module-stub.ts`, so the banner's removal is honest), still zero inline script, style and `style=`,
+and the unsupported-character wording agrees in number — `Les caractères « 日 », « 本 », « 語 » et
+« ✦ » … Retirez-les` against `Le caractère « ◌́ » … Retirez-le` for a lone combining acute.
+**The U+25CC case is real, not hypothetical**: the engine does return a bare U+0301, and without
+the dotted circle it would have attached itself to the closing guillemet. `aria-invalid` clears
+when the text is corrected.
+
+Session's own numbers on a 12.2 MP JPEG: preview 731 ms, export 729 ms, worst main-thread stall
+**18 ms** — the Web Worker containment ADR-0003 asked for, working.
+
+**It hit my worktree-not-ref mistake from the other side.** Before wiring anything it probed the
+merged module and found status 1 with no payload where I had reported status 7 with `日本語✦`. It
+was about to report a blocking discrepancy when it noticed `main` had moved, rebased, and found
+everything as described. Independent confirmation that the correction in `b4de985` was real, and
+a reminder that the cost of that mistake was nearly a wasted round for somebody else.
+
+### The engine manifest seam, as built
+
+`web/src/engine/engine-manifest.ts` exports `ENGINE_URL` and `ENGINE_INTEGRITY`, committed with a
+development fallback of `/pochoir_wasm.wasm` and no integrity. **The build session overwrites that
+file** with the content-addressed path and a `sha384-…` hash. It is TypeScript rather than a
+fetched JSON on purpose: the values land inside the hashed bundle so they cannot drift from the
+HTML referencing them, and a missing manifest is a build error rather than a blank page.
+
+`compact` and `lossless` are gone from the UI, confirmed by probe; their wire codes stay reserved.
+
+### Still open, honestly
+
+- **The timeouts are guesses.** 15 s and 60 s look generous against 730 ms on a Mac, but a
+  mid-range Android could be five or six times slower and nobody has measured one. Named as the
+  only blocking unknown in the integration checklist.
+- The shrink warning still cannot cross the ABI (ADR-0008 open question 4); the CLI warns and the
+  browser cannot.
+- No RGAA audit. AA-by-construction plus checks, which the session states plainly.
+- `make check` does not yet cover `web/` — `deploy-plumbing` is still running.
+
 ## Reserved numbers
 
 - ADR-0001 stack and dependency policy — `adr-design`, merged, `Proposed`
