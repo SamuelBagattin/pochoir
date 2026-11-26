@@ -216,13 +216,35 @@ names the ADR requirement.
 
 | session | id | owns |
 |---|---|---|
-| phase-1 (A4 cap) | `local_79c8214b-fbda-4eb6-adc4-d0f6590b8dbe` | `crates/`, `scripts/`, `docs/adr/0002-*`, and ADR-0006 if it takes that route |
+| phase-2 (the mark) | `local_79c8214b-fbda-4eb6-adc4-d0f6590b8dbe` | `crates/`, `scripts/` |
 | adr-0004-attestation | `local_082f38c0-9661-4149-b091-797afa5b08a3` | `docs/adr/0004-*` and its one row in `docs/adr/README.md` |
 
 Only shared file is the ADR index README, one row each — a trivial conflict I resolve at merge.
-**Phase 2, the mark, waits for the A4 PR to land**: both would edit `pochoir-core`'s public API,
-its tests and the CLI, and two writers on the same files is how you get a watermark that silently
-stops being applied while every merge "succeeds".
+~~Phase 2 waits for the A4 PR~~ — PR #5 merged as `a5048ad`, phase 2 briefed to the same session.
+
+### Merge 5 review — the A4 cap
+
+Reproduced every row through the release CLI rather than reading the table: 512 x 384 mm becomes
+280.0 x 210.0 mm; `--page-size native` still gives 512.1 x 384.0; and the never-enlarge rule holds
+where it counts — a 2022x1276 scan at 600 dpi comes out at **85.6 x 54.0 mm**, an identity card at
+life size. **My first attempt at that case was worthless**: `sips` silently refuses to write the
+DPI, so the fixture never approached the cap and the test proved nothing. Redone with `--dpi 600`.
+Worth remembering — the obvious way to build that fixture does not work.
+
+Two things the session did better than my brief. It made a change I had not asked for and should
+have: **the embedded JPEG's JFIF density now follows the page rather than the request** — measured
+366 dpi capped against 200 native, same 4032x3024 pixels — because on a capped page the sheet
+shrinks while the pixels do not, so a datastream claiming 200 would be false. It only shows when
+somebody extracts the JPEG, since a PDF reader scales by the CTM and ignores density, but then it
+shows. And on the ADR route I said "your call" when the README actually decides it: a changed
+decision takes a superseding ADR, not an amendment. Hence ADR-0006, scoped to image page geometry,
+with ADR-0002's reasoning untouched beneath a dated pointer.
+
+It also **declined to put my own 954 243-byte measurement in the ADR**, because it had not measured
+it, and cited its own 837 426-byte fixture instead — then proved the stronger claim with a test:
+capped and native decode to byte-identical pixels, the datastreams differing only in the density
+field. Not quoting a number you have not measured is the right instinct, and that is three times
+now a session has been right to push back.
 
 ### Session ownership while both run
 
