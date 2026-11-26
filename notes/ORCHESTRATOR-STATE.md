@@ -31,10 +31,44 @@ The one section to read if you are compacted mid-flight. Everything below is det
    against the stubbed ABI. Review it against ADR-0001's "None" rows (no state library, no CSS
    framework, no icon set, no file-drop crate), no CDN, no analytics, and verify the RGAA claims
    rather than reading them.
-3. **wasm bindings** — not briefed. Blocking the MVP. Two traps that do not announce themselves:
-   the crate **must be a workspace member** or reproducibility breaks silently, and
-   `#![forbid(unsafe_code)]` vs `#[no_mangle]` under edition 2024 has to be resolved
-   (`make wasm` emits a 43-byte empty module today). The ABI is fixed and recorded below.
+3. **wasm bindings** — in flight with `wasm-bindings`
+   (`local_c80a5861-fbfd-4348-92e3-734366a6dbb2`), briefed 2026-11-26. Owns
+   `crates/pochoir-wasm/**` (new), the `members` line, the `wasm` target, the `GUARDED` list and
+   its generated allowlist; forbidden `crates/pochoir-core/**`, `crates/pochoir-cli/**`, `web/**`.
+   Told to stop and report rather than edit the core, because `phase2-mark` has those files dirty.
+   Four traps in the brief: workspace membership (or `-Cmetadata` eats an absolute path and
+   reproducibility breaks silently), `#![forbid(unsafe_code)]` vs `#[no_mangle]` under edition
+   2024, `panic = "abort"` making a panic an outage rather than an error path, and the fact that
+   **reproducibility is measurable for the first time** now there is a non-empty module — it
+   verifies ADR-0004 Decision 1 across two checkout paths.
+
+### The ABI had drifted from the engine — three gaps, found before either side shipped
+
+The UI session had already written `web/src/engine/{abi,options,module}.ts` against the ABI I
+fixed. I snapshotted all three into `side-session-notes/.../abi-contract/` with a README, so the
+bindings session reads a stable contract rather than another session's uncommitted worktree, and
+checked the snapshot against the engine line by line. Three disagreements, none of which either
+session could have seen from where it sits:
+
+1. **Blur.** The contract packs `blurPx` at offset 28, "px at render resolution", default 0.6,
+   range 0..3. The engine has `blur_ratio`, a fraction of the font size, default 0.015, max 0.06.
+   The engine is right: **ADR-0007 corrected exactly this**, and the UI stub was written from
+   ADR-0002's pre-correction wording. Resolved my way — the wire field is a ratio. The bindings
+   implement it; **I owe the UI session the rename**, and that is mine to send, not theirs to find.
+2. **Two of the four quality modes may have nothing behind them.** `compact` needs a pixel
+   downsample and `lossless` needs a PNG/`/FlateDecode` image, while `OutputOptions` carries only
+   `quality: u8` and `dpi`. Told the bindings session to **measure which the engine can honour and
+   return `BAD_ARGUMENT` for the rest** — never map an unimplementable mode onto a nearby quality
+   number. A user who picks `lossless` and silently gets JPEG q92 has been lied to about their
+   document. Scope for the gap is mine once measured; it may narrow the MVP's mode list.
+3. `dpi` is `u32` on the wire, `f32` in the engine. Harmless, range-check before the cast.
+
+And one the contract got right that looked wrong: it flagged that ADR-0002 gives the angle default
+as -30 with a range of "0-90", read it as a magnitude allowing both tilt directions, and said it
+was flagging rather than silently choosing. `Mark::validate` already accepts `-90.0..=90.0`.
+Confirmed, no change. **That is the behaviour I want from a session** — it found a real ambiguity
+in our own document, took the sane reading, and said so instead of burying it.
+
 4. **Deploy plumbing** — last, and not from inertia: it writes into `web/` and has nothing to
    test against before the UI exists.
 
