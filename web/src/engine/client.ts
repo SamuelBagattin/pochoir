@@ -11,6 +11,11 @@ export class ClientError extends Error {
   constructor(
     readonly kind: ClientFailureKind,
     message: string,
+    /**
+     * Carried through from the engine untouched: data to interpolate into a
+     * French sentence, not a sentence. See `Failure.detail`.
+     */
+    readonly detail?: string,
   ) {
     super(message);
     this.name = 'ClientError';
@@ -174,6 +179,8 @@ export class EngineClient {
 }
 
 function failureOf(reply: Response): ClientError {
-  if (!reply.ok) return new ClientError(reply.failure.kind, reply.failure.message);
+  if (!reply.ok) {
+    return new ClientError(reply.failure.kind, reply.failure.message, reply.failure.detail);
+  }
   return new ClientError('internal', 'unexpected reply from the engine');
 }

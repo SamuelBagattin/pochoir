@@ -66,7 +66,7 @@ function failureFor(error: unknown): Failure {
   // A status that came back cleanly. The instance is fine and keeps working —
   // an unsupported character must not cost the user their warm engine.
   if (error instanceof EngineError) {
-    return { kind: error.kind, message: error.message };
+    return { kind: error.kind, message: error.message, detail: error.detail };
   }
   return { kind: 'internal', message: String((error as Error)?.message ?? error) };
 }
