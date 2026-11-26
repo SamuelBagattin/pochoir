@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/filigrane-core", "crates/filigrane-cli"]
+members = ["crates/pochoir-core", "crates/pochoir-cli"]
 
 # Shared metadata. Both crates inherit these with `field.workspace = true`.
 [workspace.package]

@@ -3,12 +3,12 @@
 version = 4
 
 [[package]]
-name = "filigrane-cli"
+name = "pochoir-cli"
 version = "0.1.0"
 dependencies = [
- "filigrane-core",
+ "pochoir-core",
 ]
 
 [[package]]
-name = "filigrane-core"
+name = "pochoir-core"
 version = "0.1.0"

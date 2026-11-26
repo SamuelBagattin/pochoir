@@ -26,7 +26,7 @@ build: ## Build the workspace for the host
 	cargo build --workspace
 
 wasm: ## Build the core engine for the browser target
-	cargo build -p filigrane-core --target $(WASM_TARGET) --release
+	cargo build -p pochoir-core --target $(WASM_TARGET) --release
 
 deps-check: ## Fail if Cargo.lock grew a third-party dependency
 	./scripts/check-deps.sh

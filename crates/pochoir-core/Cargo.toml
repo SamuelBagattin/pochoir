@@ -1,5 +1,5 @@
 [package]
-name = "filigrane-core"
+name = "pochoir-core"
 version = "0.1.0"
 description = "Local-only document watermarking engine. Compiles to native and to wasm32."
 edition.workspace = true

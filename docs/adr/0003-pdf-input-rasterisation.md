@@ -309,10 +309,10 @@ Two crates in the workspace, both depending on the core:
 
 | Artifact | Contains | Loaded when |
 | --- | --- | --- |
-| `filigrane-wasm-core` | hand-rolled codecs, glyph rasteriser, compositor, PDF writer | always, on page load |
-| `filigrane-wasm-pdf` | the above plus `hayro` | **only** on the first PDF input |
+| `pochoir-wasm-core` | hand-rolled codecs, glyph rasteriser, compositor, PDF writer | always, on page load |
+| `pochoir-wasm-pdf` | the above plus `hayro` | **only** on the first PDF input |
 
-`filigrane-wasm-core` must not depend on `hayro`, transitively or otherwise, and
+`pochoir-wasm-core` must not depend on `hayro`, transitively or otherwise, and
 this is enforced mechanically rather than by discipline — see *CI guard* below.
 Loading is two `WebAssembly.instantiateStreaming` calls; the second fires when a
 PDF is dropped.
@@ -343,7 +343,7 @@ module.
 
 **We therefore recommend the guard become per-crate**: keep the global count as a
 blunt alarm, and add a hard assertion that the dependency closure of
-`cargo tree -p filigrane-wasm-core --target wasm32-unknown-unknown` is contained
+`cargo tree -p pochoir-wasm-core --target wasm32-unknown-unknown` is contained
 in an explicit allowlist. That assertion, not the global count, is what keeps the
 common path lean once a 74-crate renderer is in the lock file. The scaffolding
 session owns `scripts/check-deps.sh`; this is a recommendation to it, not a
@@ -614,7 +614,7 @@ per-engine status; that single-threaded wasm needs no COOP/COEP; and Cloudflare'
   and publishes no pricing.
 - Which libraries `Bank-Exit/filigrane` inlines, and how
   `CyberClarence/filigraneur` writes its output PDF without `pdf-lib`.
-- The **60–120 KiB brotli estimate for `filigrane-wasm-core`**, which is an
+- The **60–120 KiB brotli estimate for `pochoir-wasm-core`**, which is an
   estimate of code that does not yet exist.
 
 ## References
