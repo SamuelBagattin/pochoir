@@ -2,7 +2,7 @@
 # Keep every target here; never put build logic only in a CI workflow.
 
 .DEFAULT_GOAL := help
-.PHONY: help fmt fmt-check lint test build wasm deps-check deps-update check clean
+.PHONY: help fmt fmt-check lint test build wasm deps-check deps-update font-subset check clean
 
 WASM_TARGET := wasm32-unknown-unknown
 
@@ -33,6 +33,14 @@ deps-check: ## Fail if a crate grew a dependency outside its allowlist
 
 deps-update: ## Regenerate the per-crate dependency allowlists by measurement
 	./scripts/check-deps.sh --update $(if $(CRATE),$(CRATE),--all)
+
+font-subset: ## Rebuild the bundled font subset from an upstream Roboto-Regular.ttf
+	@test -n "$(FONT)" || { \
+		echo 'Usage: make font-subset FONT=/path/to/Roboto-Regular.ttf'; \
+		echo 'Upstream: https://github.com/googlefonts/roboto src/hinted/Roboto-Regular.ttf'; \
+		exit 2; \
+	}
+	./scripts/subset-font.py "$(FONT)" crates/pochoir-core/assets/roboto/Roboto-Regular-subset.ttf
 
 check: fmt-check lint test wasm deps-check ## Everything CI runs
 	@printf '\nAll checks passed.\n'
