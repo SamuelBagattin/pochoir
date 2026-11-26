@@ -10,9 +10,26 @@ The repository is <https://github.com/SamuelBagattin/pochoir>. The local folder 
 
 - Be lean. Prefer writing a feature ourselves over inheriting a crate or package we do not control.
 - Reasons: supply-chain surface, auditability, and client bundle size.
-- Every new dependency needs an ADR under `docs/adr/` **and** a `THRESHOLD` bump in `scripts/check-deps.sh`, in the same commit that adds it.
+- The sharpened rule, from [ADR-0001](docs/adr/0001-stack-and-dependency-policy.md): **hand-roll everything that writes; depend deliberately only for parsers of hostile input.**
+- Every new dependency needs an ADR under `docs/adr/`, a regenerated allowlist, and a `THRESHOLD` bump in `scripts/check-deps.sh` if the global count moved — all in the same commit that adds it.
 - `pochoir-core` and `pochoir-cli` currently have zero third-party crates. `make deps-check` fails the build if that changes.
 - `pochoir-core` must keep compiling for `wasm32-unknown-unknown`: no `std::fs`, no `std::time`, no threads, no sockets in that crate.
+
+### How the guard works
+
+`make deps-check` runs two checks:
+
+1. **A global count** — `[[package]]` entries in `Cargo.lock` against `THRESHOLD`. Blunt, and blind to *which* crate pulled something in, so it will stop being much of a guard once the PDF renderer lands. It is kept because it is the only check that also sees dev- and build-dependencies.
+2. **A per-crate allowlist** — for each guarded crate, the third-party crates in its dependency closure (`cargo tree --edges normal`) must match `scripts/allowlist/<crate>.txt` exactly. `pochoir-core` is measured for `wasm32-unknown-unknown`, `pochoir-cli` for the host. An empty allowlist file means zero third-party dependencies.
+
+**Never edit an allowlist by hand.** It is a measurement, and a hand-copied figure is how ADR-0001 ended up citing 88 crates for a configuration we do not use. Regenerate it:
+
+```
+make deps-update                   # every guarded crate
+make deps-update CRATE=pochoir-core  # just one
+```
+
+Then commit the diff alongside the ADR that justifies it.
 
 ## Build
 
