@@ -72,6 +72,7 @@ large scanned PDFs are a WASM memory risk; SEO against a gouv.fr domain is hard;
 | name | id | owns | state |
 |---|---|---|---|
 | `scaffold` | `local_ae46d0e2-325d-4ddb-82b6-544820645fe1` | build skeleton | **merged into `main` as `ea30fcd`** |
+| `licence-rename` | `local_b18a9d99-1c33-43a8-8992-c63b54ead64a` | `LICENSE*`, the `filigrane-*` → `pochoir-*` rename, ADR status flip, `scripts/check-deps.sh` + `scripts/allowlist/` | running; **opens a PR** (the remote exists now, so sessions push and PR, and I merge) |
 | `adr-design` | `local_b703f80a-cb41-408f-9087-ec847b630de1` | `docs/adr/` only — design-only | **merged into `main` as `1a8303b`**; idle, told to stand down. Keep it rather than archive it: it holds the design context if Samuel asks for ADR changes |
 
 File ownership is disjoint by design: `scaffold` must not touch `docs/`, `adr-design` must not
@@ -282,8 +283,8 @@ Also accepted from the session's feedback, to be briefed with the first implemen
    two `LICENSE` files, per-crate `license` fields replacing `UNLICENSED`, and a README statement.
    Until that lands the public repo is legally all-rights-reserved. Folded into the first
    implementation session as its opening commit.
-5. **Approving the ADRs** before any implementation session starts. He asked for a summary of the
-   essentials first, which I gave him in the session rather than as a document.
+5. ~~Approving the ADRs~~ — **approved 2026-11-26**, after a summary of the essentials. The
+   `licence-rename` session flips all three from `Proposed` to `Accepted`.
 
 ## Carried forward from merge 1
 
