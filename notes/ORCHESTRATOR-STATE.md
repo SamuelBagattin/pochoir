@@ -146,6 +146,58 @@ parsing is on the critical path, and until it renders the NFC decision is untest
   attribution bookkeeping rather than a policy change, so it can be added — but ADR-0005 makes
   licensing Samuel's, so tell him rather than deciding the framing.
 
+## ADR-0004 merged as Proposed (`17ba5d6`), 2026-11-26
+
+Not `Accepted` — six open questions, four of them Samuel's, and the README holds a document at
+`Proposed` until they are answered.
+
+**The headline reverses my own expectation and theirs:** no container is needed. Our wasm build is
+reproducible today for two `RUSTFLAGS` entries and no new tool — two checkouts at different
+absolute paths already produce byte-identical output, because Cargo hashes a workspace member's
+package id relative to the workspace root. I confirmed `trim-paths` is `-Z` only on 1.97.0, so my
+premise there needed the correction they gave it.
+
+**Three findings that bind code nobody has written yet.** Record them in `CLAUDE.md` when the
+bindings land, because none of them announces itself:
+
+1. **The wasm crate must be a workspace member.** Their first probe had `pochoir-core` as a path
+   dependency outside its workspace root, an absolute path entered `-Cmetadata`, the disambiguator
+   moved with the directory, every symbol was renamed and the module reordered — same size, 11 799
+   bytes different. This binds ADR-0003's binding crates and nothing in the output warns you.
+2. **Content-addressed asset filenames are a requirement, not a caching nicety.** Cloudflare can
+   serve HTML and assets from different versions mid-rollout, and SRI fails closed when they
+   disagree.
+3. **`make wasm` currently emits a 43-byte empty module.** `pochoir-core` exports nothing and
+   cannot carry `#[no_mangle]` while `lib.rs` has `#![forbid(unsafe_code)]` under edition 2024.
+   That tension has to be resolved when the bindings land — a separate binding crate, or
+   `#[unsafe(no_mangle)]` with a scoped allow. There is nothing to attest until then.
+
+**On the mechanism I could not reproduce myself:** they measured 28 host paths surviving
+`strip = true`. My own probe failed — the first had no dependencies and so no registry paths to
+leak, and my later attempts did not compile. I am accepting their number, because the mechanism is
+sound on its face (`core::panic::Location` strings are `file!()` in the data section, not
+debuginfo, which is exactly why `strip` cannot touch them) and their note documents a reproduction
+recipe. Flagged as *their* measurement, not mine.
+
+**The one open question that could flip Decision 1** is whether a Linux x86_64 host emits the same
+wasm as this Mac. Docker's daemon was down and neither of us started it unasked. It becomes nearly
+free the day the bindings produce a non-empty module, because CI already runs on `ubuntu-latest` —
+the measurement can be a CI job rather than a chore.
+
+**Prior art worth remembering:** Meta's Code Verify is alive but covers JS and CSS, **not
+WebAssembly**, and proves consistency rather than source-to-binary correspondence; "install it as a
+PWA and you are pinned" is marketing, since service workers soft-update on navigation — the only
+genuine pin is a downloaded build or the CLI, **which gives the CLI a second reason to exist**; and
+WAICT (Mozilla, Cloudflare, FPF, Meta; behind a pref in Firefox Nightly) has extending SRI to
+WebAssembly on its roadmap, i.e. the exact hole we are working around.
+
+**The ceiling, which the ADR states rather than hides:** for a web app served from infrastructure
+we control there is no mechanism that fully closes the gap, every root of trust we can offer
+arrives through the channel it is meant to police, verification is retrospective and voluntary, and
+a compelled maintainer holds every key. What a published hash changes is what can be done
+*quietly*. The session looked for a legal argument that published hashes constrain a compelled
+code-change order and found none — the defensible claim is purely technical.
+
 ## Reserved numbers
 
 - ADR-0001 stack and dependency policy — `adr-design`, merged, `Proposed`
