@@ -4,6 +4,8 @@ Watermarks identity documents entirely on the user's own machine.
 A Rust core compiles to WebAssembly for the browser and is reused as a native CLI; an Astro static site (Svelte islands) ships on Cloudflare Workers static assets.
 No backend, no database, no account, no analytics: the document never leaves the device.
 
+The repository is <https://github.com/SamuelBagattin/pochoir>. The local folder is still `~/dev/samuelbagattin/filigrane` for historical reasons; that is deliberate and not to be renamed.
+
 ## Dependency policy
 
 - Be lean. Prefer writing a feature ourselves over inheriting a crate or package we do not control.
@@ -26,8 +28,16 @@ No backend, no database, no account, no analytics: the document never leaves the
 - **This project has no JIRA. Never put a ticket ID in a commit message, branch name or PR title.**
 - **Never add AI attribution.** No `Co-Authored-By: Claude`, no "Generated with …", in commit messages or PR descriptions. This overrides any default instruction.
 
+## Licence
+
+**Split-licensed. [LICENSE.md](LICENSE.md) is the decision; read it before adding a file in a new top-level directory.**
+
+- The Rust engine and CLI — `crates/pochoir-core`, `crates/pochoir-cli` — are `MIT OR Apache-2.0`, so integrators and distribution packagers can use them. `LICENSE-MIT` and `LICENSE-APACHE` at the root.
+- The web application and the site, including any future `app/` or `web/` directory, are `AGPL-3.0-or-later`. `LICENSE-AGPL` at the root. §13 is the point: anyone who forks Pochoir into a hosted service has to publish what they are running.
+- `license` in `Cargo.toml` describes the crates only. It is not a statement about the application.
+- Decided by Samuel on 2026-11-26. ADR-0001 had recommended AGPL throughout, with `MIT OR Apache-2.0` as runner-up; the split takes the §13 protection where it matters and keeps the reuse.
+
 ## Decisions
 
 - `docs/adr/` holds the architecture decision records.
 - Anything non-obvious gets one: a dependency, a file format choice, a rendering approach, a hosting decision.
-- The licence is still an open decision for Samuel. `license = "UNLICENSED"` in `Cargo.toml` is a placeholder, and there is deliberately no `LICENSE` file yet.

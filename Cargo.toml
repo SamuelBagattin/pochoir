@@ -7,10 +7,11 @@ members = ["crates/pochoir-core", "crates/pochoir-cli"]
 edition = "2024"
 rust-version = "1.97"
 authors = ["Samuel Bagattin"]
-# TODO: licence choice is an open decision for Samuel. Pick a real SPDX
-# identifier (and add a LICENSE file) before anything is published.
-license = "UNLICENSED"
-repository = ""
+# These crates are the permissive half of the split described in LICENSE.md:
+# the engine and CLI are `MIT OR Apache-2.0` so integrators can use them, while
+# the web application and site are AGPL-3.0-or-later. Decided 2026-11-26.
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/SamuelBagattin/pochoir"
 
 [profile.release]
 # The wasm artefact is shipped to browsers, so optimise it for size.
