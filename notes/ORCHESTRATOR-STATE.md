@@ -147,9 +147,46 @@ names the ADR requirement.
    decision; does stop it resurfacing later as "the ADR said we had a mitigation".
    **Lesson for me:** a decision recorded only in this file is a decision the next session cannot
    find. Record orchestrator decisions in the governing document, not just here.
-6. **Running:** `core-write-path` — engine phase 1, session `local_79c8214b-fbda-4eb6-adc4-d0f6590b8dbe` (started 2026-11-26 on Samuel's word; the earlier card was task_f7faf84f) — engine phase 1, image in → PDF
-   out, no watermark. The harness refused a direct start because that turn was triggered by
-   another session's message, so it is a card awaiting Samuel's click.
+6. ~~PR #4 `core-write-path`~~ — merged as `f322640`. **The engine's write path exists**: image
+   in, PDF out, no watermark. 5 307 lines, zero-to-two dependencies, 118 tests.
+
+### Merge 4 review — what I reproduced rather than read
+
+- **The allowlist is a true measurement.** `./scripts/check-deps.sh --update --all` run by me
+  reproduces both committed files byte for byte, and `THRESHOLD=15` equals the lock count. The
+  gap from ADR-0001's predicted 14 is `miniz_oxide` locked twice plus an unenabled `zlib-rs`
+  flate2 backend — neither in the closure, which is why check 2 exists.
+- **ISO 32000-1 verified from the Adobe copy I downloaded.** sha256 matches the session's
+  (`9de0ca9e…17ff`); all three passages verbatim. **My own refinement, stronger than what the
+  session claimed:** §7.4.8's footnote (a) ends **"PDF DCT Encoding shall exactly follow those
+  rules established by Adobe for PostScript"** — a `shall` that incorporates Adobe TN #5116 by
+  reference. So the APP14 CMYK inversion is normative *through* §7.4.8, not merely a convention
+  we are right to follow. That is the sentence ADR-0001's note should cite.
+- **End to end on a real 1512×806 JPEG:** byte-identical across two runs; poppler reports the
+  embedded image as `1512x806 rgb 8bpc jpeg 200 ppi`, so no resampling; `pdfinfo` gives `Pochoir`
+  for both strings, no dates, no metadata stream; `Exif`/`GPS`/`CreationDate`/`ModDate`/`xpacket`/
+  `/Metadata` all absent. Rendered with `pdftoppm` and looked at: upright, undistorted, legible.
+- **Code read, not skimmed.** The image dictionary is derived from the datastream's own frame
+  header rather than the caller, so `/ColorSpace` and `/BitsPerComponent` agree by construction.
+  Quantisation tables are T.81 Annex K.1/K.2 in natural order, zigzag is Figure A.6, quality
+  scaling is the IJG mapping.
+- I nearly accused the session of editing this file; it had not. `git diff main <branch>` compares
+  trees, so it showed my own newer commit as the branch's "change". Diff from the merge base.
+
+### Open after merge 4
+
+- **For Samuel:** at the 200 dpi default a 4 032 px phone photo makes a ~20-inch page. Faithful to
+  ADR-0002, but product direction, so his call. The `max(stated, requested)` dpi rule itself is
+  right and stays either way.
+- Revisit later, not now: decoder errors are reduced to `&'static str` to keep `Error: Copy`, which
+  was a scaffold-era doc comment rather than an ADR requirement. Losing the decoder's message will
+  cost someone a debugging session.
+- ADR-0002's "same goldens on both targets" is **unwired** — nothing runs the suite under a wasm
+  runtime, only the build. The determinism guarantee is half-tested, and there is real arithmetic
+  in the tree now.
+- The Adobe-CMYK `/Decode` path is tested only against a synthetic frame header.
+- `/FlateDecode` against RFC 1950/1951 is still uncited.
+- ADR-0001's `/Decode` "could not verify" bullet can now be closed, with the TN #5116 sentence.
 
 ### Session ownership while both run
 
