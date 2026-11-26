@@ -521,6 +521,59 @@ prefixed with U+25CC DOTTED CIRCLE. That would have shipped.
 inside its lane. `deploy-plumbing` has `_headers`, `wrangler.jsonc` and three new scripts,
 likewise. Neither has strayed.
 
+## Merges 10 and 11 — the engine reaches the browser (`25d31b0`, `842b119`), 2026-11-27
+
+**PR #10, the WebAssembly bindings.** I verified it by instantiating the module in Node and
+calling it, which is what I had told the session I would do. Exactly the ten exports plus
+`memory`. A 1200x800 PNG in: status 0, 109 568 bytes beginning `%PDF-`, **width and height both
+0**, so the bitmap-vs-PDF invariant is real and not just documented. Preview at `max_px` 600:
+600x400 with `len` exactly `w*h*4` — RGBA8 unpadded confirmed. `'Confidentiel 日本語 ✦'` returns
+**status 7** with payload `日本語✦`: the characters themselves, all four, in order, no prose,
+exactly as specified. A bad `dpi` returns status 1 with payload `dpi`. Junk returns status 3 with
+no payload.
+
+**The result worth keeping: the native CLI and the wasm module produce byte-identical PDFs from
+the same input, sha256 `f319a700…`.** ADR-0002's cross-target determinism was recorded in this
+file as half-tested — nothing ran the suite under a wasm runtime, only the build. It is now
+demonstrated across two architectures on a real render. The hand-rolled trig earned its keep:
+that is the thing that would have differed.
+
+**ADR-0004 Decision 1 is measured and holds.** I ran `make wasm-repro` myself: byte-identical
+modules from two checkout paths of very different lengths, no host path in the output. I then
+checked the thing that would have made it theatre — whether the artefact we would *ship* is the
+reproducible one — and `make wasm` sets the same two `RUSTFLAGS`, producing the identical hash
+`94dfabd…`. It does. The cross-OS question stays open and is now nearly free, because CI runs on
+`ubuntu-latest` and there is finally a non-empty module.
+
+**No new third-party crate.** `scripts/allowlist/pochoir-wasm.txt` is byte-identical to
+`pochoir-core`'s, `png` is a dev-dependency only with the reasoning recorded in the manifest, and
+`THRESHOLD` moved 15 → 16 for the workspace member itself.
+
+**ADR-0008 Decision 2 answers the quality-mode question by measurement:** `standard` and `high`
+work, **`compact` and `lossless` have no engine behind them** and return `BAD_ARGUMENT` rather
+than being approximated. My earlier reading was right but it is now measured rather than guessed.
+Decision 3 is the one I would have missed: the preview derives the seed from the full-resolution
+pixmap *before* downscaling, so preview and export jitter identically. Preview ≠ export is exactly
+the bug that would have been found by a user and not by us.
+
+**PR #11, the five engine-plumbing defects.** Reproduced the coalescing before merging: twelve
+slider changes 200 ms apart against a 140 ms debounce gave **eight** previews, not twelve, ending
+up to date. My eight against their seven is harness jitter. The ordering in the fault path is the
+part worth keeping — the faulting request is settled first so its caller gets the real reason,
+and only then is the worker discarded.
+
+### Integration briefed, and the seam that stops the last collision
+
+`web-ui` owns integration, in `web/src/**` only. The module is `pochoir_wasm.wasm`, 374 877 bytes.
+It must **not** add a Makefile target, commit anything to `web/public/`, or hardcode a URL:
+ADR-0004 requires a content-addressed filename, and the build wiring is `deploy-plumbing`'s lane.
+The seam is a generated `web/src/engine/engine-manifest.ts` carrying the URL and the integrity
+hash, with a committed development fallback — `web-ui` owns its shape, `deploy-plumbing` emits
+the real one. Reconciling those two is mine at merge.
+
+**The banner is the signal.** The UI still shows a DEMONSTRATION notice saying the engine is not
+wired. When that comes off honestly, the MVP is real.
+
 ## Reserved numbers
 
 - ADR-0001 stack and dependency policy — `adr-design`, merged, `Proposed`
