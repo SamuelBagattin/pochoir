@@ -12,7 +12,7 @@
 //! settles it, in this order:
 //!
 //! 1. **Wrap** on word boundaries, up to the three lines ADR-0002 already
-//!    allows.
+//!    allows. Words are never broken.
 //! 2. **Shrink** the font if three lines still overflow, down to
 //!    [`MIN_FONT_SIZE_RATIO`] — which is not an invented number but ADR-0002
 //!    Decision 3's own stated minimum of 1% of the shorter edge.
@@ -23,6 +23,18 @@
 //! asserts about itself. For a tool whose entire purpose is making a document's
 //! intended use legible on its face, that is a correctness bug, not a cosmetic
 //! one — so the mark that cannot be drawn honestly is not drawn at all.
+//!
+//! **Step 3 is a corner, not the ordinary fate of long text.** An unbreakable
+//! 200-character string is usually drawn, by shrinking a long way, because the
+//! floor is a fraction of the page's *shorter edge* while the width budget
+//! follows the *rotated extent* — so widening a page lowers the floor faster
+//! than it lowers the budget, and the same text is refused on one page shape
+//! and drawn on another. That makes a silent shrink the common outcome and the
+//! thing actually worth reporting, which
+//! [`Composition::was_shrunk_noticeably`] exists for. ADR-0007 Decision 2 has
+//! the measurements.
+//!
+//! [`Composition::was_shrunk_noticeably`]: super::Composition::was_shrunk_noticeably
 //!
 //! # What "fits" means
 //!
@@ -176,6 +188,10 @@ fn width_budget(page_width: f32, page_height: f32, height: f32, angle: f32) -> O
 
 /// Lay the text out, shrinking the font as far as [`MIN_FONT_SIZE_RATIO`]
 /// allows and refusing beyond that.
+///
+/// A successful [`Layout`] may still be much smaller than `requested_font_size_px`;
+/// [`Layout::shrunk`] says that it is, and the caller is expected to pass that
+/// on rather than let the mark come out quietly faint.
 ///
 /// `text` must already be NFC-normalised and known to be drawable; see
 /// [`super::prepare`].
@@ -470,10 +486,11 @@ mod tests {
     #[test]
     fn a_tiny_page_shrinks_rather_than_refusing() {
         // Worth stating as a property, because the arithmetic is not obvious:
-        // at the 1% floor a 200-character mark is about one page wide on one
-        // line, so wrapped to three lines it fits *any* page. The refusal path
-        // therefore exists for text that cannot be broken at all, not for text
-        // that is merely long. Illegible is the user's call; missing is ours.
+        // shrinking to the floor buys a great deal of room, so text that looks
+        // far too long is usually drawn rather than refused. Illegible is the
+        // user's call to make, and the caller is told when the mark came out
+        // much smaller than asked for; missing is ours, and is reserved for
+        // text no size can fit.
         let font = font();
         let layout =
             plan(&font, REALISTIC, 40.0, 40.0, 1.4, -30.0).expect("even 40 pixels gets a mark");
