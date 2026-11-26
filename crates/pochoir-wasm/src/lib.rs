@@ -59,10 +59,17 @@
 //!
 //! ## `pochoir_alloc(len: usize) -> usize`
 //!
-//! Reserve `len` bytes and return their address. Returns `0` if the allocation
-//! failed or `len` exceeds [`abi::MAX_BUFFER_BYTES`]; `len == 0` also returns
-//! `0`, which is not an error — there is nothing to write. The contents are
+//! Reserve `len` bytes and return their address. The contents are
 //! uninitialised: write every byte you intend to read.
+//!
+//! **`0` is returned both for failure and for `len == 0`, and the two are told
+//! apart by the length, not by the pointer.** A return of `0` for a non-zero
+//! `len` is a failure — treat it as out of memory — and happens when the
+//! allocator refuses or when `len` exceeds [`abi::MAX_BUFFER_BYTES`]. A return
+//! of `0` for `len == 0` is **not** a failure: there is nothing to write, there
+//! is no allocation to make, and passing `(0, 0)` to a render function is
+//! accepted and yields an empty slice. So a caller checks its own length first,
+//! exactly as the browser client already does.
 //!
 //! ## `pochoir_free(ptr: usize, len: usize)`
 //!
@@ -78,14 +85,14 @@
 //! `pochoir_result_free`.
 //!
 //! On success the result carries the PDF bytes, with `width` and `height` both
-//! `0`. That is how a caller tells a document from a bitmap.
+//! `0`. That is how a caller tells a document from a bitmap — see
+//! **Telling a document from a bitmap** below.
 //!
 //! ## `pochoir_render_preview(img_ptr, img_len, text_ptr, text_len, opts_ptr, opts_len, max_px) -> usize`
 //!
 //! The same mark, on a bitmap small enough to paint. Returns a handle whose
-//! result carries **RGBA8 pixels**, row-major, top row first, four bytes per
-//! pixel, no row padding, with `width` and `height` set — so `len` is always
-//! `width * height * 4`, and both dimensions are at least 1.
+//! result carries the pixels described under **The preview pixel format**
+//! below, with `width` and `height` set, both at least 1.
 //!
 //! `max_px` bounds the **longer** edge. A page already within it is returned at
 //! its own size: this never enlarges an image, because upsampling a preview
@@ -99,17 +106,24 @@
 //!
 //! ## `pochoir_result_status(handle) -> u32`
 //!
-//! `0` on success. Every other value is a failure and the result carries no
-//! bytes:
+//! `0` on success. Every other value is a failure, and the result then carries
+//! a detail payload instead of output — see **The failure payload** below.
 //!
 //! | code | meaning |
 //! | --- | --- |
 //! | 0 | `OK` |
-//! | 1 | `BAD_ARGUMENT` — a parameter was out of range, the options struct was malformed, the mark text was empty or undrawable, or a quality mode was asked for that this engine will not fake |
+//! | 1 | `BAD_ARGUMENT` — a parameter was out of range, the options struct was malformed, or a quality mode was asked for that this engine will not fake |
 //! | 2 | `DECODE_FAILED` — the bytes are a JPEG or a PNG and the decoder refused them |
 //! | 3 | `UNSUPPORTED_FORMAT` — the bytes are neither a JPEG nor a PNG |
 //! | 4 | `OUT_OF_MEMORY` — the image exceeds what this build will allocate for |
 //! | 5 | `INTERNAL` — a bug here; please report it |
+//! | 6 | `TEXT_DOES_NOT_FIT` — the mark will not fit the page at any permitted font size (ADR-0007 Decision 2) |
+//! | 7 | `UNSUPPORTED_CHARACTER` — the bundled font subset cannot draw some of the mark text |
+//!
+//! These numbers are fixed. Anything not among the seven is `5`. Codes 6 and 7
+//! exist because collapsing ADR-0007's two named refusals into `BAD_ARGUMENT`
+//! leaves a user whose mark contains one undrawable character with a message
+//! about their parameters, which sends them to the wrong fix.
 //!
 //! Calling this on handle `0` returns `5`. No `pochoir_render_*` call returns
 //! `0`, so that is a defensive answer rather than a documented path; passing
@@ -117,12 +131,77 @@
 //!
 //! ## `pochoir_result_ptr(handle) -> usize`, `pochoir_result_len(handle) -> usize`
 //!
-//! The result bytes. Valid until `pochoir_result_free`. `ptr` is stable for the
-//! lifetime of the handle and `len` is `0` on any failure.
+//! The result bytes, valid until `pochoir_result_free`. `ptr` is stable for the
+//! lifetime of the handle, and **both are `0` when there are no bytes** — an
+//! empty result never returns a dangling pointer, so a caller may check `ptr`
+//! before `len`.
 //!
 //! ## `pochoir_result_width(handle) -> u32`, `pochoir_result_height(handle) -> u32`
 //!
 //! The bitmap dimensions for a preview; `0` for a PDF and `0` on failure.
+//!
+//! # The preview pixel format
+//!
+//! **RGBA8, row-major, top row first, four bytes per pixel, no row padding and
+//! no stride, non-premultiplied (straight) alpha, in that byte order: R, G, B,
+//! A.** So `len` is always exactly `width * height * 4`, the pixel at `(x, y)`
+//! begins at `(y * width + x) * 4`, and the buffer can be handed to
+//! `ImageData`/`putImageData` as it stands.
+//!
+//! It is stated this precisely because every plausible alternative — BGRA, a
+//! padded stride, premultiplied alpha — would show up as a colour or alignment
+//! bug in the picture rather than as an error anywhere. No conversion happens
+//! on this side: the engine's `Pixmap` is already exactly this, and the preview
+//! is a straight copy out of it.
+//!
+//! In practice the compositor leaves every pixel opaque (`a = 255`), because
+//! the mark blends itself into the page rather than being left for the caller
+//! to flatten. A PNG input with transparency keeps its alpha in the regions the
+//! mark does not touch.
+//!
+//! # Telling a document from a bitmap
+//!
+//! There is **no `kind` field**, because the value is already carried:
+//!
+//! > **`width > 0` means the result is a preview bitmap. A PDF always has
+//! > `width == 0` and `height == 0`.**
+//!
+//! This is an invariant of the implementation, not a property of the happy
+//! path: `Outcome`'s three constructors are the only way to build a result,
+//! each fixes the dimensions for its own case, and a test asserts it across
+//! every input the suite reaches. A failure also has both at `0`, so a caller
+//! checks the status first.
+//!
+//! # The failure payload
+//!
+//! On a non-`OK` status, `ptr` and `len` carry **a short UTF-8 payload, at most
+//! 4096 bytes**, and `width` and `height` stay `0`.
+//!
+//! The payload is **data for the caller to interpolate into its own wording,
+//! never a sentence**. This product's interface is French, and an English
+//! sentence produced here would be a string the caller can neither display nor
+//! translate. So:
+//!
+//! | status | payload |
+//! | --- | --- |
+//! | `UNSUPPORTED_CHARACTER` | every offending character, concatenated, in order of first appearance, without duplicates, separators or quoting — e.g. `中文日` |
+//! | `BAD_ARGUMENT` | the bare name of the offending field, a stable ASCII identifier (see below) |
+//! | anything else | **absent**: `ptr` and `len` are both `0` |
+//!
+//! An absent payload is the right answer where the only fact is the status
+//! itself. `TEXT_DOES_NOT_FIT` has nothing to add beyond "it does not fit", and
+//! a caller should treat an empty payload as "no detail" rather than as an
+//! error.
+//!
+//! The field names a `BAD_ARGUMENT` can carry are those the engine already uses
+//! for the parameters it owns — `quality`, `dpi`, `mark font size`,
+//! `mark angle`, `mark opacity`, `mark blur`, `mark text`, `mark tile density`,
+//! `page size`, `preview size`, `max_px` — plus five for fields that exist only
+//! on the wire, which the engine therefore has no name for:
+//! [`options::FIELD_VERSION`], [`options::FIELD_LENGTH`],
+//! [`options::FIELD_MODE`], [`options::FIELD_PAGE_SIZING`] and
+//! [`options::FIELD_DENSITY`]. A caller maps the ones it recognises and ignores
+//! the rest; an unrecognised name must degrade to no detail, not to an error.
 //!
 //! ## `pochoir_result_free(handle)`
 //!
@@ -172,8 +251,9 @@
 //!
 //! The mark text is a **separate UTF-8 buffer**, not part of the struct. It is
 //! normalised to NFC by the engine. Invalid UTF-8, empty or whitespace-only
-//! text, text over 200 characters, and text containing a character the bundled
-//! font cannot draw are all `BAD_ARGUMENT`.
+//! text and text over 200 characters are `BAD_ARGUMENT`; text the bundled font
+//! cannot draw is `UNSUPPORTED_CHARACTER`, carrying every offending character,
+//! and text that will not fit the page is `TEXT_DOES_NOT_FIT`.
 //!
 //! # Quality modes this engine will not fake
 //!

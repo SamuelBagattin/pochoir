@@ -252,10 +252,10 @@ unsafe fn with_inputs(
         )
     };
     let (Some(image), Some(text_bytes), Some(options)) = buffers else {
-        return Outcome::failed(Status::BadArgument);
+        return Outcome::refused(Status::BadArgument);
     };
     let Ok(text) = core::str::from_utf8(text_bytes) else {
-        return Outcome::failed(Status::BadArgument);
+        return Outcome::refused(Status::BadArgument);
     };
     render(image, text, options)
 }
@@ -271,9 +271,23 @@ pub extern "C" fn pochoir_result_status(handle: usize) -> u32 {
 }
 
 /// The address of the result bytes, or `0` if there are none.
+///
+/// **An empty result returns `0`, never a dangling pointer.** `Vec::as_ptr` on
+/// an empty `Vec` returns a non-null aligned address that points at nothing,
+/// which would read as "there is a payload here" to a caller that checks `ptr`
+/// before `len`. The browser's detail reader does exactly that, and an absent
+/// payload has to be distinguishable from a present one, so the emptiness is
+/// checked here rather than left to the caller.
 #[unsafe(no_mangle)]
 pub extern "C" fn pochoir_result_ptr(handle: usize) -> usize {
-    with_header(handle, |header| header.bytes.as_ptr() as usize).unwrap_or(0)
+    with_header(handle, |header| {
+        if header.bytes.is_empty() {
+            0
+        } else {
+            header.bytes.as_ptr() as usize
+        }
+    })
+    .unwrap_or(0)
 }
 
 /// The length of the result bytes in bytes, or `0`.
@@ -472,6 +486,59 @@ mod tests {
         pochoir_result_free(handle);
         pochoir_free(op, ol);
         pochoir_free(tp, tl);
+    }
+
+    /// The failure payload, read exactly as the browser reads it: check `ptr`
+    /// and `len` are non-zero, then decode strictly.
+    #[test]
+    fn a_failure_payload_is_readable_through_the_accessors() {
+        let image = jpeg(64, 64);
+        let (ip, il) = copy_in(&image);
+        let (tp, tl) = copy_in("Pour \u{4e2d}\u{6587}".as_bytes());
+        let (op, ol) = copy_in(&defaults());
+
+        let handle = pochoir_render_pdf(ip, il, tp, tl, op, ol);
+        assert_eq!(
+            pochoir_result_status(handle),
+            Status::UnsupportedCharacter.code()
+        );
+        assert_ne!(pochoir_result_ptr(handle), 0);
+        assert_eq!(pochoir_result_width(handle), 0);
+        assert_eq!(pochoir_result_height(handle), 0);
+        let detail = String::from_utf8(copy_out(handle)).expect("the payload is UTF-8");
+        assert_eq!(detail, "\u{4e2d}\u{6587}");
+        pochoir_result_free(handle);
+
+        pochoir_free(op, ol);
+        pochoir_free(tp, tl);
+        pochoir_free(ip, il);
+    }
+
+    /// An absent payload must read as absent. `Vec::as_ptr` on an empty `Vec`
+    /// returns a non-null dangling address, which a caller checking `ptr`
+    /// before `len` would mistake for a payload that is there.
+    #[test]
+    fn an_absent_payload_reports_a_null_pointer_not_a_dangling_one() {
+        let (ip, il) = copy_in(b"not an image");
+        let (tp, tl) = copy_in(TEXT.as_bytes());
+        let (op, ol) = copy_in(&defaults());
+
+        let handle = pochoir_render_pdf(ip, il, tp, tl, op, ol);
+        assert_eq!(
+            pochoir_result_status(handle),
+            Status::UnsupportedFormat.code()
+        );
+        assert_eq!(
+            pochoir_result_ptr(handle),
+            0,
+            "an empty payload must report ptr 0"
+        );
+        assert_eq!(pochoir_result_len(handle), 0);
+        pochoir_result_free(handle);
+
+        pochoir_free(op, ol);
+        pochoir_free(tp, tl);
+        pochoir_free(ip, il);
     }
 
     #[test]

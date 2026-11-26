@@ -10,7 +10,7 @@
 use pochoir_core::mark::{Mark, TileDensity};
 use pochoir_core::{MAX_DPI, OutputOptions, PageSizing};
 
-use crate::Status;
+use crate::status::{Failure, Status};
 
 /// Size of the packed struct, in bytes.
 pub const OPTIONS_BYTES: usize = 48;
@@ -96,41 +96,64 @@ impl Request {
     }
 }
 
+/// Stable ASCII identifiers for the wire-only fields.
+///
+/// The engine names the parameters it owns — `dpi`, `mark blur`, `mark text`
+/// and so on — and those names travel in the failure payload unchanged. The
+/// five fields below exist only on the wire, so the engine has no name for
+/// them and these are ours. They are part of the ABI: a caller maps them to its
+/// own wording, and an unrecognised one degrades to no detail.
+pub const FIELD_VERSION: &str = "options version";
+/// See [`FIELD_VERSION`].
+pub const FIELD_LENGTH: &str = "options length";
+/// See [`FIELD_VERSION`].
+pub const FIELD_MODE: &str = "quality mode";
+/// See [`FIELD_VERSION`].
+pub const FIELD_PAGE_SIZING: &str = "page sizing";
+/// See [`FIELD_VERSION`].
+pub const FIELD_DENSITY: &str = "mark tile density";
+
+fn bad(field: &str) -> Failure {
+    Failure::naming(Status::BadArgument, field)
+}
+
 /// Decode `raw` and `text` into engine options.
 ///
 /// # Errors
 ///
-/// [`Status::BadArgument`] for a buffer of the wrong length, an unknown
-/// version, an undefined enumerant, a value outside its range, or mark text
-/// that is empty, over-long or undrawable. Every range check that the engine
-/// already owns is left to [`OutputOptions::validate`], so there is one
-/// definition of each bound rather than two that can drift.
-pub fn parse(raw: &[u8], text: &str) -> Result<Request, Status> {
+/// A [`Failure`] with [`Status::BadArgument`] for a buffer of the wrong length,
+/// an unknown version, an undefined enumerant or a value outside its range,
+/// naming the offending field; and whatever
+/// [`Failure::for_error`] makes of a mark the engine refuses — in particular
+/// [`Status::UnsupportedCharacter`] carrying every undrawable character. Every
+/// range check the engine already owns is left to [`OutputOptions::validate`],
+/// so there is one definition of each bound rather than two that can drift.
+pub fn parse(raw: &[u8], text: &str) -> Result<Request, Failure> {
     if raw.len() != OPTIONS_BYTES {
-        return Err(Status::BadArgument);
+        return Err(bad(FIELD_LENGTH));
     }
     if u32_at(raw, 0) != Some(OPTIONS_VERSION) {
-        return Err(Status::BadArgument);
+        return Err(bad(FIELD_VERSION));
     }
 
     let mode = u32_at(raw, 4)
         .and_then(QualityMode::from_code)
-        .ok_or(Status::BadArgument)?;
-    let quality = mode.jpeg_quality().ok_or(Status::BadArgument)?;
+        .ok_or_else(|| bad(FIELD_MODE))?;
+    let quality = mode.jpeg_quality().ok_or_else(|| bad(FIELD_MODE))?;
 
     let page_sizing = match u32_at(raw, 8) {
         Some(0) => PageSizing::CapToA4,
         Some(1) => PageSizing::Native,
-        _ => return Err(Status::BadArgument),
+        _ => return Err(bad(FIELD_PAGE_SIZING)),
     };
 
     // Range-checked as an integer *before* the cast, so an absurd figure never
     // becomes a float the engine then has to reason about. `MAX_DPI` is the
     // engine's own bound; comparing against it as a `u32` is exact for every
     // value it can hold.
-    let dpi_raw = u32_at(raw, 12).ok_or(Status::BadArgument)?;
+    let dpi_raw = u32_at(raw, 12).ok_or_else(|| bad(FIELD_LENGTH))?;
     if dpi_raw == 0 || u64::from(dpi_raw) > MAX_DPI as u64 {
-        return Err(Status::BadArgument);
+        return Err(bad("dpi"));
     }
     #[allow(
         clippy::cast_precision_loss,
@@ -141,22 +164,22 @@ pub fn parse(raw: &[u8], text: &str) -> Result<Request, Status> {
     // The one unit conversion on the wire: the UI offers a percentage because
     // that is what a person reads off a slider; the engine keys the mark to a
     // ratio of the page's shorter edge.
-    let font_size_ratio = f32_at(raw, 16).ok_or(Status::BadArgument)? / 100.0;
-    let angle_degrees = f32_at(raw, 20).ok_or(Status::BadArgument)?;
-    let opacity = f32_at(raw, 24).ok_or(Status::BadArgument)?;
+    let font_size_ratio = f32_at(raw, 16).ok_or_else(|| bad(FIELD_LENGTH))? / 100.0;
+    let angle_degrees = f32_at(raw, 20).ok_or_else(|| bad(FIELD_LENGTH))?;
+    let opacity = f32_at(raw, 24).ok_or_else(|| bad(FIELD_LENGTH))?;
     // Offset 28 is a ratio of the font size, not a pixel count: ADR-0007
     // Decision 3. The stale `blurPx` naming on the browser side is a rename
     // waiting to happen there, not a conversion to do here.
-    let blur_ratio = f32_at(raw, 28).ok_or(Status::BadArgument)?;
+    let blur_ratio = f32_at(raw, 28).ok_or_else(|| bad(FIELD_LENGTH))?;
 
     let density = match u32_at(raw, 32) {
         Some(0) => TileDensity::Low,
         Some(1) => TileDensity::Normal,
         Some(2) => TileDensity::High,
-        _ => return Err(Status::BadArgument),
+        _ => return Err(bad(FIELD_DENSITY)),
     };
 
-    let packed_colour = u32_at(raw, 36).ok_or(Status::BadArgument)?;
+    let packed_colour = u32_at(raw, 36).ok_or_else(|| bad(FIELD_LENGTH))?;
     let colour = [
         ((packed_colour >> 16) & 0xFF) as u8,
         ((packed_colour >> 8) & 0xFF) as u8,
@@ -167,7 +190,7 @@ pub fn parse(raw: &[u8], text: &str) -> Result<Request, Status> {
     // behaviour and the engine's own default. Reading it as a literal seed would
     // give every document the same tile displacements, which is exactly what the
     // jitter exists to deny an attacker holding two marked copies.
-    let seed = match u64_at(raw, 40).ok_or(Status::BadArgument)? {
+    let seed = match u64_at(raw, 40).ok_or_else(|| bad(FIELD_LENGTH))? {
         0 => None,
         value => Some(value),
     };
@@ -198,7 +221,7 @@ pub fn parse(raw: &[u8], text: &str) -> Result<Request, Status> {
     // each one, free to drift from the first.
     options
         .validate()
-        .map_err(|e| crate::status::status_for(&e))?;
+        .map_err(|e| Failure::for_error(&e, text))?;
 
     Ok(Request { options, mode })
 }
@@ -232,9 +255,10 @@ fn bytes_at(buffer: &[u8], offset: usize) -> Option<[u8; 4]> {
 #[cfg(test)]
 mod tests {
     use super::{
-        HIGH_QUALITY, OPTIONS_BYTES, OPTIONS_VERSION, QualityMode, STANDARD_QUALITY, parse,
+        FIELD_DENSITY, FIELD_LENGTH, FIELD_MODE, FIELD_PAGE_SIZING, FIELD_VERSION, HIGH_QUALITY,
+        OPTIONS_BYTES, OPTIONS_VERSION, QualityMode, STANDARD_QUALITY, parse,
     };
-    use crate::Status;
+    use crate::status::Status;
     use pochoir_core::PageSizing;
     use pochoir_core::mark::{
         DEFAULT_ANGLE_DEGREES, DEFAULT_BLUR_RATIO, DEFAULT_COLOUR, DEFAULT_FONT_SIZE_RATIO,
@@ -314,7 +338,9 @@ mod tests {
         );
         for stale_pixels in [0.6_f32, 3.0] {
             assert_eq!(
-                parse(&with(28, &stale_pixels.to_le_bytes()), "X").err(),
+                parse(&with(28, &stale_pixels.to_le_bytes()), "X")
+                    .err()
+                    .map(|f| f.status),
                 Some(Status::BadArgument),
                 "{stale_pixels} read as a ratio is out of range and must be refused"
             );
@@ -339,7 +365,9 @@ mod tests {
         for (code, mode) in [(0_u32, QualityMode::Compact), (3, QualityMode::Lossless)] {
             assert_eq!(mode.jpeg_quality(), None);
             assert_eq!(
-                parse(&with(4, &code.to_le_bytes()), "X").err(),
+                parse(&with(4, &code.to_le_bytes()), "X")
+                    .err()
+                    .map(|f| f.status),
                 Some(Status::BadArgument),
                 "mode {code} has no engine behind it and must not be mapped onto a nearby quality"
             );
@@ -349,32 +377,46 @@ mod tests {
     #[test]
     fn an_undefined_enumerant_is_refused() {
         assert_eq!(
-            parse(&with(4, &4_u32.to_le_bytes()), "X").err(),
+            parse(&with(4, &4_u32.to_le_bytes()), "X")
+                .err()
+                .map(|f| f.status),
             Some(Status::BadArgument)
         );
         assert_eq!(
-            parse(&with(8, &2_u32.to_le_bytes()), "X").err(),
+            parse(&with(8, &2_u32.to_le_bytes()), "X")
+                .err()
+                .map(|f| f.status),
             Some(Status::BadArgument)
         );
         assert_eq!(
-            parse(&with(32, &3_u32.to_le_bytes()), "X").err(),
+            parse(&with(32, &3_u32.to_le_bytes()), "X")
+                .err()
+                .map(|f| f.status),
             Some(Status::BadArgument)
         );
     }
 
     #[test]
     fn a_wrong_length_or_unknown_version_is_refused() {
-        assert_eq!(parse(&[], "X").err(), Some(Status::BadArgument));
         assert_eq!(
-            parse(&default_bytes()[..47], "X").err(),
+            parse(&[], "X").err().map(|f| f.status),
+            Some(Status::BadArgument)
+        );
+        assert_eq!(
+            parse(&default_bytes()[..47], "X").err().map(|f| f.status),
             Some(Status::BadArgument)
         );
         let mut long = default_bytes();
         long.push(0);
-        assert_eq!(parse(&long, "X").err(), Some(Status::BadArgument));
+        assert_eq!(
+            parse(&long, "X").err().map(|f| f.status),
+            Some(Status::BadArgument)
+        );
         for version in [0_u32, 2, u32::MAX] {
             assert_eq!(
-                parse(&with(0, &version.to_le_bytes()), "X").err(),
+                parse(&with(0, &version.to_le_bytes()), "X")
+                    .err()
+                    .map(|f| f.status),
                 Some(Status::BadArgument),
                 "version {version} is not understood by this build"
             );
@@ -384,15 +426,21 @@ mod tests {
     #[test]
     fn the_dpi_is_range_checked_as_an_integer_before_the_cast() {
         assert_eq!(
-            parse(&with(12, &0_u32.to_le_bytes()), "X").err(),
+            parse(&with(12, &0_u32.to_le_bytes()), "X")
+                .err()
+                .map(|f| f.status),
             Some(Status::BadArgument)
         );
         assert_eq!(
-            parse(&with(12, &10_001_u32.to_le_bytes()), "X").err(),
+            parse(&with(12, &10_001_u32.to_le_bytes()), "X")
+                .err()
+                .map(|f| f.status),
             Some(Status::BadArgument)
         );
         assert_eq!(
-            parse(&with(12, &u32::MAX.to_le_bytes()), "X").err(),
+            parse(&with(12, &u32::MAX.to_le_bytes()), "X")
+                .err()
+                .map(|f| f.status),
             Some(Status::BadArgument)
         );
         assert_eq!(
@@ -430,7 +478,9 @@ mod tests {
         for offset in [16_usize, 20, 24, 28] {
             for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
                 assert_eq!(
-                    parse(&with(offset, &bad.to_le_bytes()), "X").err(),
+                    parse(&with(offset, &bad.to_le_bytes()), "X")
+                        .err()
+                        .map(|f| f.status),
                     Some(Status::BadArgument),
                     "{bad} at offset {offset} must be refused"
                 );
@@ -439,19 +489,68 @@ mod tests {
     }
 
     #[test]
-    fn empty_or_undrawable_mark_text_is_refused() {
-        for text in ["", "   ", "\n", "\u{4e2d}\u{6587}"] {
+    fn empty_or_over_long_mark_text_is_a_bad_argument_naming_the_field() {
+        for text in ["", "   ", "\n", &"a".repeat(201)] {
+            let failure = parse(&default_bytes(), text).expect_err("must be refused");
             assert_eq!(
-                parse(&default_bytes(), text).err(),
-                Some(Status::BadArgument),
+                failure.status,
+                Status::BadArgument,
                 "{text:?} is not a mark this engine will draw"
             );
+            assert_eq!(failure.detail, "mark text");
         }
-        let too_long = "a".repeat(201);
-        assert_eq!(
-            parse(&default_bytes(), &too_long).err(),
-            Some(Status::BadArgument)
-        );
+    }
+
+    /// Undrawable text is its own status, carrying every offending character
+    /// rather than the first, so the caller can name them all in its own
+    /// wording. ADR-0007 Decision 6.
+    #[test]
+    fn undrawable_mark_text_names_every_character_it_cannot_draw() {
+        let failure = parse(&default_bytes(), "Pour \u{4e2d}\u{6587} et \u{4e2d}")
+            .expect_err("must be refused");
+        assert_eq!(failure.status, Status::UnsupportedCharacter);
+        assert_eq!(failure.detail, "\u{4e2d}\u{6587}");
+    }
+
+    /// Every `BAD_ARGUMENT` the parser produces names a field, so the caller
+    /// always has something to build a sentence around. The names themselves
+    /// are the ABI; this pins them.
+    #[test]
+    fn every_wire_level_refusal_names_its_field() {
+        let cases: [(Vec<u8>, &str); 7] = [
+            (default_bytes()[..47].to_vec(), FIELD_LENGTH),
+            (with(0, &2_u32.to_le_bytes()), FIELD_VERSION),
+            (with(4, &9_u32.to_le_bytes()), FIELD_MODE),
+            (with(4, &0_u32.to_le_bytes()), FIELD_MODE),
+            (with(8, &7_u32.to_le_bytes()), FIELD_PAGE_SIZING),
+            (with(32, &7_u32.to_le_bytes()), FIELD_DENSITY),
+            (with(12, &0_u32.to_le_bytes()), "dpi"),
+        ];
+        for (bytes, want) in cases {
+            let failure = parse(&bytes, "X").expect_err("must be refused");
+            assert_eq!(failure.status, Status::BadArgument);
+            assert_eq!(failure.detail, want);
+            assert!(
+                failure.detail.is_ascii(),
+                "field names are ASCII identifiers"
+            );
+        }
+    }
+
+    /// The names the engine owns reach the caller unchanged, rather than being
+    /// re-spelled here into a second vocabulary that can drift.
+    #[test]
+    fn an_out_of_range_value_carries_the_engines_own_field_name() {
+        for (offset, bytes, want) in [
+            (16_usize, 99.0_f32.to_le_bytes(), "mark font size"),
+            (20, 120.0_f32.to_le_bytes(), "mark angle"),
+            (24, 0.99_f32.to_le_bytes(), "mark opacity"),
+            (28, 3.0_f32.to_le_bytes(), "mark blur"),
+        ] {
+            let failure = parse(&with(offset, &bytes), "X").expect_err("must be refused");
+            assert_eq!(failure.status, Status::BadArgument);
+            assert_eq!(failure.detail, want, "offset {offset}");
+        }
     }
 
     /// Accented French text is the common case and must survive, decomposed or

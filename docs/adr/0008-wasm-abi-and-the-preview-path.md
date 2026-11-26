@@ -202,7 +202,90 @@ browser. `--no-jitter` exists to reproduce a figure, which is a CLI concern, and
 a browser user turning it off would weaken their own document without being told
 why.
 
-## Decision 5 — Every export returns a status; a panic is an outage, not an error path
+## Decision 5 — The failure payload is data for the caller to word, never a sentence
+
+**On a non-`OK` status, `ptr` and `len` carry a short UTF-8 payload and
+`width`/`height` stay zero. The payload is the bare fact; the caller writes the
+sentence.**
+
+A bare `u32` status loses the one detail that matters most often. A French user
+whose mark contains a single character the font subset lacks is the motivating
+case: "le calcul a échoué" is the worst possible answer, and ADR-0007 Decision 6
+already asks the engine to name *every* unsupported character rather than the
+first — for a caller that, until now, had no way to receive the answer.
+
+The tempting fix is to send a human-readable message. That is wrong here, and
+the reason generalises: **this product's interface is French, and a sentence
+produced in Rust is a string the browser can neither display nor translate.**
+So the payload carries data only:
+
+| status | payload |
+| --- | --- |
+| `UNSUPPORTED_CHARACTER` | every offending character, concatenated, in order of first appearance, no duplicates, no separators, no quoting |
+| `BAD_ARGUMENT` | the bare field name, a stable ASCII identifier |
+| anything else | **absent** — `ptr` and `len` both zero |
+
+An absent payload is the honest answer where the only fact is the status.
+`TEXT_DOES_NOT_FIT` has nothing to add beyond "it does not fit", and inventing a
+number for the UI to show would be writing a sentence by other means.
+
+Two consequences worth recording:
+
+- **`pochoir_result_ptr` returns `0` for an empty payload.** `Vec::as_ptr` on an
+  empty `Vec` returns a non-null dangling address, which a caller checking `ptr`
+  before `len` — as the browser's reader does — would read as a payload that is
+  there. The emptiness is checked on this side.
+- **The field names are part of the ABI.** Those the engine owns travel
+  unchanged (`dpi`, `mark blur`, `mark text`, …) rather than being re-spelled
+  here into a second vocabulary free to drift. Five fields exist only on the
+  wire, so the engine has no name for them and this crate defines them:
+  `options version`, `options length`, `quality mode`, `page sizing`,
+  `mark tile density`. A caller maps what it recognises; an unrecognised name
+  degrades to no detail.
+
+The payload is capped at 4096 bytes, which is the caller's own read limit, so
+exceeding it would lose the whole payload rather than truncate it. Nothing comes
+close: the mark is capped at 200 characters, so the largest payload reachable is
+800 bytes, and there is a test that measures it.
+
+### Two status codes beyond the original six
+
+| code | status | engine error |
+| --- | --- | --- |
+| 6 | `TEXT_DOES_NOT_FIT` | `Error::MarkDoesNotFit` |
+| 7 | `UNSUPPORTED_CHARACTER` | `Error::UnsupportedCharacter` |
+
+0–5 are unchanged. These are ADR-0007's two named refusals, and collapsing them
+into `BAD_ARGUMENT` would tell a user whose sentence is merely too long that
+their parameters are wrong, which sends them to the wrong fix. Each has its own
+remedy — shorten the text; change those characters — so each gets its own code.
+Anything outside the seven is `INTERNAL`.
+
+## Decision 6 — The result header carries no `kind` field, and the invariant is pinned
+
+**A caller discriminates on `width > 0`. A PDF result always has `width == 0`
+and `height == 0`.**
+
+No field is added for a value already carried. But an undocumented invariant is
+a trap, so this one is written into the crate documentation, made structural —
+`Outcome`'s three constructors are the only way to build a result and each fixes
+the dimensions for its own case — and pinned by a test that asserts it across
+every input shape the suite reaches, not just the happy path.
+
+The preview's pixel format is specified in the same spirit: **RGBA8, row-major,
+top row first, four bytes per pixel, no stride padding, straight (non-
+premultiplied) alpha**, so `len` is exactly `width * height * 4`. It is stated
+that precisely because every plausible alternative — BGRA, a padded stride,
+premultiplied alpha — would surface as a colour or alignment bug in the picture
+rather than as an error anywhere. No conversion happens: `Pixmap` is already
+exactly this and the preview is a straight copy out of it.
+
+`pochoir_alloc` returns `0` both on failure and for `len == 0`, and the two are
+told apart by the length rather than the pointer: a `0` for a non-zero `len` is
+out of memory, a `0` for `len == 0` is nothing to allocate. `(0, 0)` is accepted
+by the render functions and yields an empty slice.
+
+## Decision 7 — Every export returns a status; a panic is an outage, not an error path
 
 `[profile.release]` sets `panic = "abort"`. A panic therefore traps the instance:
 every later call fails and the Worker has to construct a new module. So no export
@@ -269,3 +352,13 @@ plausible-looking lie about the user's input.
    principle — and the largest implementation cost.
 3. **Should the resampler move into `pochoir-core`?** Decision 3's last section.
    Not urgent while this crate is its only user.
+4. **A shrunken mark has no way to reach the browser.** `Composition` gained
+   `shrink_ratio()` and `was_shrunk_noticeably()`, and the CLI prints a warning
+   from them. This ABI cannot carry it: a warning is not a failure, so it
+   cannot travel as a status, and the success payload is the document or the
+   bitmap. It needs either another export, another field in the header, or a
+   framing of the success payload — all three are ABI changes, and the right
+   one depends on what else will eventually need to come back the same way.
+   Deliberately not guessed here; left for scoping. `image_to_pdf_observed`
+   and `render_to_pdf_observed`'s third closure argument are where the value
+   would come from.
