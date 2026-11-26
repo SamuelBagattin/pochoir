@@ -5,7 +5,7 @@
 .PHONY: help fmt fmt-check lint test build wasm wasm-repro deps-check deps-update \
         font-subset nfc-table check clean \
         web-install web-build web-check web-serve web-reproduce web-deploy-check \
-        web-engine web-deploy web-verify-live web-clean
+        web-engine web-site web-deploy web-verify-live web-clean
 
 WASM_TARGET := wasm32-unknown-unknown
 WASM_ARTEFACT := target/$(WASM_TARGET)/release/pochoir_wasm.wasm
@@ -121,13 +121,23 @@ web-serve: web-build ## Serve web/dist locally with the production response head
 web-reproduce: web-install ## Build the site twice from different paths and compare
 	./scripts/check-web-reproducible.sh
 
-web-deploy-check: web-check ## Everything a deploy does, except the deploy
+web-site: ## The deployable site: real engine, bundle, attestation, assertions
+	# Nothing imports the stub any anymore, so a bundle with no engine renders
+	# nothing. The engine has to be placed BEFORE astro build: it goes into
+	# web/public/, and the hash it writes into engine-manifest.ts has to be
+	# inside the bundle the hash describes.
+	$(MAKE) wasm
+	$(MAKE) web-engine ENGINE=$(WASM_ARTEFACT)
+	$(MAKE) web-check
+	./scripts/web-attest.py web/dist --verify --require-engine
+
+web-deploy-check: web-site ## Everything a deploy does, except the deploy
 	@printf '\n--- resolved response headers ---\n'
 	./scripts/web-serve.py --dist web/dist --explain / /_pochoir/app.js /_pochoir/engine/e.wasm
 	@printf '\n--- wrangler dry run ---\n'
 	cd web && $(WRANGLER) deploy --dry-run --outdir ../target/wrangler-dry-run
 
-web-deploy: web-check ## Publish to Cloudflare. Needs credentials this repo does not hold.
+web-deploy: web-site ## Publish to Cloudflare. Needs credentials this repo does not hold.
 	@test -n "$$CLOUDFLARE_API_TOKEN" || { \
 		echo 'make web-deploy: CLOUDFLARE_API_TOKEN is not set.'; \
 		echo 'There is no Cloudflare account for this project yet. See docs/DEPLOY.md.'; \

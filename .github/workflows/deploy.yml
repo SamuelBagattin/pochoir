@@ -64,8 +64,16 @@ jobs:
           corepack prepare --activate
         working-directory: web
 
-      # Builds the site twice, from two different absolute paths, and fails on
-      # any disagreement. Also fails if the output names its own checkout.
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install
+
+      # ADR-0004 Decision 4 item 1 for the engine: two builds from two
+      # different directories, compared byte for byte.
+      - name: make wasm-repro
+        run: make wasm-repro
+
+      # The same property for the web bundle. Also fails if the output names
+      # its own checkout.
       - name: make web-reproduce
         run: make web-reproduce
 
@@ -73,6 +81,8 @@ jobs:
       # `_headers` file ships `Integrity-Policy: blocked-destinations=(script)`,
       # so an unattested bundle is a blank page in production; this is the step
       # that makes that impossible to deploy by accident.
+      # Builds the engine, places it content-addressed, attests the bundle and
+      # asserts the result, then dry-runs wrangler. Needs no credentials.
       - name: make web-deploy-check
         run: make web-deploy-check
 
@@ -107,12 +117,17 @@ jobs:
           corepack prepare --activate
         working-directory: web
 
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install
+
       # Rebuilt here rather than downloaded, so that what is uploaded is what
       # this commit produces and not an artifact that passed through a store.
       # It is the third build of the same bytes; `verify` has already proved
-      # that number is stable.
-      - name: make web-build
-        run: make web-build
+      # that number is stable. `web-site` rather than `web-build`, because
+      # nothing imports the stub any more and a bundle with no engine renders
+      # nothing.
+      - name: make web-site
+        run: make web-site
 
       - name: Publish to Cloudflare Workers static assets
         # No account id in this repository. Both values come from repository

@@ -447,7 +447,7 @@ def _allowed_uncovered(rel: str) -> str | None:
     return None
 
 
-def verify(dist: Path) -> int:
+def verify(dist: Path, require_engine: bool = False) -> int:
     """Assert the attestation is present, correct and complete. Mutates nothing.
 
     Three things are checked, and the third is the one that matters: a chunk
@@ -513,6 +513,40 @@ def verify(dist: Path) -> int:
                 f"and that is not a known exception"
             )
 
+    # The engine. Since the stub left the bundle, a `dist/` with no engine is
+    # a site that 404s the only thing it can do — but `make check` builds
+    # without a Rust toolchain step, so this is asserted only where it must
+    # hold: on the deploy path, via --require-engine.
+    if require_engine:
+        engine = find_engine(dist)
+        if engine is None:
+            problems.append(
+                "no engine in "
+                f"{ENGINE_DIR}/: run `make web-engine ENGINE=…` before building. "
+                "Nothing imports the stub any more, so a bundle without an "
+                "engine cannot render anything"
+            )
+        stray = [
+            w.relative_to(dist).as_posix()
+            for w in sorted(dist.rglob("*.wasm"))
+            if w.parent != dist / ENGINE_DIR
+        ]
+        for rel in stray:
+            problems.append(
+                f"{rel}: a wasm module outside {ENGINE_DIR}/. It carries no "
+                "content hash and `_headers` does not give it "
+                "Content-Type: application/wasm"
+            )
+        # The tell that the generator never ran: the development fallback URL
+        # compiled into the shipped bundle.
+        for js in sorted((dist / "_pochoir").glob("**/*.js")) if (dist / "_pochoir").is_dir() else []:
+            if "/pochoir_wasm.wasm" in js.read_text(encoding="utf-8", errors="ignore"):
+                problems.append(
+                    f"{js.relative_to(dist).as_posix()}: references the "
+                    "development fallback '/pochoir_wasm.wasm'. "
+                    "engine-manifest.ts was not rewritten before the build"
+                )
+
     manifest_path = dist / "manifest.json"
     if not manifest_path.is_file():
         problems.append("manifest.json is missing from the build output")
@@ -560,6 +594,11 @@ def main(argv: list[str]) -> int:
         action="store_true",
         help="assert the attestation is present, correct and complete; mutate nothing",
     )
+    parser.add_argument(
+        "--require-engine",
+        action="store_true",
+        help="with --verify: also assert a hashed wasm engine is in the build",
+    )
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args(argv[1:])
 
@@ -572,7 +611,7 @@ def main(argv: list[str]) -> int:
     verbose = not args.quiet
 
     if args.verify:
-        return verify(dist)
+        return verify(dist, require_engine=args.require_engine)
 
     if not args.no_sri:
         if verbose:

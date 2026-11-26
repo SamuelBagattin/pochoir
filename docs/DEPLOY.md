@@ -125,39 +125,53 @@ applies. That needs a page written in French and is left to whoever owns
 
 ## The engine
 
-When `crates/pochoir-wasm` produces a module, wiring it in is three things:
+It is wired. `select.ts` returns the real `WasmModule`, nothing imports the
+stub any more, and a bundle without an engine therefore renders nothing at
+all. So the engine is part of the deployable site, not an extra:
 
 ```
-make wasm
-make web-engine ENGINE=target/wasm32-unknown-unknown/release/pochoir_wasm.wasm
-make web-build
+make web-site
 ```
 
-`web-engine` places the module at `web/public/_pochoir/engine/pochoir_wasm.<hash>.wasm`
-and rewrites `web/src/engine/wasm-build.ts` with that URL and its SHA-384. The
-third thing is the one line nobody can write for the bindings session:
-`src/engine/abi.ts` currently declares its own `WASM_URL = '/pochoir_core.wasm'`
-and `WASM_INTEGRITY = undefined`, and those two declarations become
+That is `make wasm`, then `make web-engine ENGINE=…`, then `make web-check`,
+then one more assertion. `web-deploy` and `web-deploy-check` both depend on
+it, so there is no way to publish a bundle whose engine is missing or
+unhashed.
+
+`web-engine` places the module at
+`web/public/_pochoir/engine/pochoir_wasm.<hash>.wasm` — before the build, so
+Astro copies it and the hash ends up inside the bundle it describes — and
+rewrites **two lines** of `web/src/engine/engine-manifest.ts`, whose doc
+comment is the contract:
 
 ```ts
-export { WASM_URL, WASM_INTEGRITY } from './wasm-build';
+export const ENGINE_URL: string = '/_pochoir/engine/pochoir_wasm.<hash>.wasm';
+export const ENGINE_INTEGRITY: string | undefined = 'sha384-…';
 ```
 
-`select.ts` then returns `WasmModule.load()` instead of the stub.
+Only the two `export const` values are touched, so the contract comment
+travels with the file and the working diff while an engine is placed is
+exactly two lines.
 
-Note also that `WASM_URL`'s current value names `pochoir_core.wasm`, while the
-artefact `make wasm` produces is `pochoir_wasm.wasm`. Replacing the constant
-with the generated one fixes that too.
+**Getting back to `pnpm dev`.** `make web-engine ENGINE=--clear` removes the
+placed module and puts both fallback values back; the result is byte-identical
+to the committed file, so `git diff` is empty. Then drop the artefact at
+`web/public/pochoir_wasm.wasm` by hand — uncommitted, unhashed, no integrity —
+which is what the committed fallback points at.
 
-Note that the engine's URL **must** stay content-addressed. An unhashed
-`/pochoir_core.wasm` reintroduces the mid-rollout failure the hashes exist to
-prevent: HTML from one version carrying an integrity hash while the URL still
-resolves to another version's bytes, and the fetch failing closed.
+The module lives in its own `_pochoir/engine/` directory rather than beside the
+other assets for one reason: `_headers` has to give it
+`Content-Type: application/wasm`, and a trailing splat is the only pattern form
+Cloudflare documents. The contract's example path shows
+`/_pochoir/pochoir_wasm.<hash>.wasm`; the three numbered requirements are all
+met either way, and the subdirectory is what makes requirement 3 expressible.
 
-`manifest.json` picks the module up automatically — `web-attest.py` looks in
-`_pochoir/engine/` — and `verify-live.py` then also asserts the served
-`Content-Type` is exactly `application/wasm`, without which
-`WebAssembly.instantiateStreaming` rejects.
+**Two guards against shipping the development fallback.**
+`web-attest.py --verify --require-engine`, which only the deploy path runs,
+fails if there is no hashed module in `_pochoir/engine/`, if any `.wasm` sits
+outside it, or if any built JavaScript still contains the string
+`/pochoir_wasm.wasm` — the exact tell that the generator never ran. Both were
+negative-tested.
 
 What remains unimplemented from ADR-0004 Decision 4 after that: the
 `rustflags` field in the manifest's `build` section, which should record what
