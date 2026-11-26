@@ -212,6 +212,18 @@ names the ADR requirement.
 - `/FlateDecode` against RFC 1950/1951 is still uncited.
 - ADR-0001's `/Decode` "could not verify" bullet can now be closed, with the TN #5116 sentence.
 
+### Running now (two sessions, disjoint files)
+
+| session | id | owns |
+|---|---|---|
+| phase-1 (A4 cap) | `local_79c8214b-fbda-4eb6-adc4-d0f6590b8dbe` | `crates/`, `scripts/`, `docs/adr/0002-*`, and ADR-0006 if it takes that route |
+| adr-0004-attestation | `local_082f38c0-9661-4149-b091-797afa5b08a3` | `docs/adr/0004-*` and its one row in `docs/adr/README.md` |
+
+Only shared file is the ADR index README, one row each — a trivial conflict I resolve at merge.
+**Phase 2, the mark, waits for the A4 PR to land**: both would edit `pochoir-core`'s public API,
+its tests and the CLI, and two writers on the same files is how you get a watermark that silently
+stops being applied while every merge "succeeds".
+
 ### Session ownership while both run
 
 - `licence-rename` owns `docs/adr/` and `.github/`.
