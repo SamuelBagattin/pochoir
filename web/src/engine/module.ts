@@ -58,6 +58,25 @@ export class EngineError extends Error {
   }
 }
 
+/**
+ * The engine did not fail — it *faulted*. Thrown when a call into the module
+ * raises instead of returning a result header: a trap, which with ADR-0003's
+ * `panic = "abort"` poisons the wasm instance for good.
+ *
+ * The distinction matters and is the whole point of having two classes. An
+ * `EngineError` means a status code came back cleanly, through an instance
+ * that is still perfectly healthy — an unsupported character, say. Treating
+ * that as a fault would throw away a good instance every time somebody typed
+ * an emoji. An `EngineFault` means the instance cannot be trusted again and
+ * the worker holding it has to go.
+ */
+export class EngineFault extends Error {
+  constructor(readonly reason: unknown) {
+    super(`the engine faulted: ${String((reason as Error)?.message ?? reason)}`);
+    this.name = 'EngineFault';
+  }
+}
+
 export function errorForStatus(status: number, detail?: string): EngineError {
   switch (status) {
     case STATUS.BAD_ARGUMENT:

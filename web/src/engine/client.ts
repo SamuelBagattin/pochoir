@@ -11,6 +11,11 @@ export class ClientError extends Error {
   constructor(
     readonly kind: ClientFailureKind,
     message: string,
+    /**
+     * Carried through from the engine untouched: data to interpolate into a
+     * French sentence, not a sentence. See `Failure.detail`.
+     */
+    readonly detail?: string,
   ) {
     super(message);
     this.name = 'ClientError';
@@ -48,12 +53,27 @@ export class EngineClient {
     this.#pdfTimeout = options.pdfTimeoutMs ?? 60_000;
   }
 
+  /**
+   * Whether this browser can host the engine at all: a module Web Worker to
+   * run it in, and WebAssembly to run.
+   *
+   * It is deliberately only those two. This check is not the place to list
+   * whatever the module behind the seam happens to use — it gated on
+   * `OffscreenCanvas` until now, which is something only the browser-side
+   * *stub* needs, and the result was that a browser perfectly capable of
+   * running Pochoir would have been told to update itself.
+   *
+   * What it also cannot test for is the real limit, which is CSP: ADR-0004
+   * requires `'wasm-unsafe-eval'` and declines to pair it with
+   * `'unsafe-eval'`, so Safari below 16 fails at instantiation with a
+   * `WebAssembly.CompileError` rather than at fetch. There is no clean
+   * feature detection for that, and inventing one here would be a guess. It
+   * is handled where it actually happens: the load fails, and the failure is
+   * reported as an unsupported browser, which is true and says something the
+   * user can act on.
+   */
   static get supported(): boolean {
-    return (
-      typeof Worker !== 'undefined' &&
-      typeof WebAssembly === 'object' &&
-      typeof OffscreenCanvas !== 'undefined'
-    );
+    return typeof Worker !== 'undefined' && typeof WebAssembly === 'object';
   }
 
   get implementation(): 'wasm' | 'stub' | null {
@@ -130,11 +150,22 @@ export class EngineClient {
       name: 'pochoir-engine',
     });
     worker.onmessage = (event: MessageEvent<Response>) => {
-      const entry = this.#pending.get(event.data.id);
-      if (!entry) return;
-      clearTimeout(entry.timer);
-      this.#pending.delete(event.data.id);
-      entry.resolve(event.data);
+      const message = event.data;
+      const entry = this.#pending.get(message.id);
+      if (entry) {
+        clearTimeout(entry.timer);
+        this.#pending.delete(message.id);
+        entry.resolve(message);
+      }
+      // Settle the request that faulted *first*, so its caller gets the real
+      // reason, then discard the worker. The recovery path is the one that
+      // already exists for a timeout: the next call builds a fresh worker and
+      // re-uploads the image.
+      if (!message.ok && message.failure.fatal) {
+        this.terminate(
+          new ClientError('internal', 'the engine instance faulted and was discarded'),
+        );
+      }
     };
     worker.onerror = () => {
       this.terminate(new ClientError('internal', 'the engine worker stopped'));
@@ -163,6 +194,8 @@ export class EngineClient {
 }
 
 function failureOf(reply: Response): ClientError {
-  if (!reply.ok) return new ClientError(reply.failure.kind, reply.failure.message);
+  if (!reply.ok) {
+    return new ClientError(reply.failure.kind, reply.failure.message, reply.failure.detail);
+  }
   return new ClientError('internal', 'unexpected reply from the engine');
 }
