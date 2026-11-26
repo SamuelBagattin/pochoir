@@ -13,7 +13,13 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use pochoir_core::{DEFAULT_DPI, DEFAULT_QUALITY, OutputOptions, PageSizing};
+use pochoir_core::mark::{
+    MAX_BLUR_RATIO, MAX_FONT_SIZE_RATIO, MAX_OPACITY, MIN_FONT_SIZE_RATIO, MIN_OPACITY,
+};
+use pochoir_core::{
+    DEFAULT_DPI, DEFAULT_QUALITY, Mark, OutputOptions, PageSizing, TileDensity,
+    mark::unsupported_characters,
+};
 
 const USAGE: &str = "\
 pochoir - watermark documents locally, without uploading anything.
@@ -44,13 +50,52 @@ Options:
                        native gives the true size at the resolution above,
                        however large. No pixel differs between the two; only
                        the page does.
+
+Watermark:
+  -m, --mark TEXT      The text to burn into the page, up to 200 characters.
+                       Without it no watermark is drawn.
+
+                       Name the recipient and the purpose: it is what makes the
+                       mark attributable, and attributability is most of the
+                       deterrent. For instance:
+
+                         -m 'Document destine exclusivement a une demande de
+                             location - 26/11/2026'
+
+      --mark-size P    Font size as a percent of the page's shorter edge,
+                       1 to 10 (default 3.5). Relative to the page, so the mark
+                       looks the same at every resolution and on every sheet.
+      --mark-angle D   Rotation in degrees, -90 to 90 (default -30). Negative
+                       runs from the bottom left to the top right. A diagonal
+                       mark crosses the document's own text lines, so removing
+                       it means reconstructing text across the stroke.
+      --mark-opacity O 0.05 to 0.80 (default 0.30). The mark must not stop the
+                       recipient reading the document. Coverage comes from
+                       tiling, not from one heavy mark.
+      --mark-colour H  Six hex digits, e.g. 1a1a1a (the default). A dark grey
+                       survives a black-and-white photocopy and heavy JPEG
+                       re-compression; a pale one can vanish. A colour too
+                       light to survive is warned about, not refused.
+      --mark-density D low, normal (default) or high.
+      --mark-blur P    Blur as a percent of the font size, 0 to 6
+                       (default 1.5). Softens the glyph edges so the mark reads
+                       as part of the image. This is antialiasing: it has not
+                       been measured against any watermark-removal tool and is
+                       not claimed as a defence.
+      --seed N         Seed the position jitter, so a run is reproducible
+                       across documents. Without it the seed is derived from
+                       the document and the parameters, which is already
+                       reproducible for a given file.
+      --no-jitter      Put every tile on an unshifted grid. Jitter is on by
+                       default because two runs then place the mark
+                       differently, so somebody holding two marked copies
+                       cannot difference them to recover the clean original.
+
   -V, --version        Print the core engine version and exit.
   -h, --help           Print this help and exit.
 
 The document never leaves this machine. The output carries no EXIF, no GPS,
-no dates and no build identifier.
-
-No watermark is drawn yet: this is the write path only.";
+no dates and no build identifier.";
 
 /// What the command line asked for.
 struct Invocation {
@@ -110,9 +155,14 @@ fn run(invocation: &Invocation) -> Result<String, String> {
     std::fs::write(&invocation.output, &pdf)
         .map_err(|error| format!("cannot write {}: {error}", show(&invocation.output)))?;
     Ok(format!(
-        "wrote {} ({} bytes)",
+        "wrote {} ({} bytes{})",
         show(&invocation.output),
-        pdf.len()
+        pdf.len(),
+        if invocation.options.mark.is_some() {
+            ", watermarked"
+        } else {
+            ", no watermark"
+        }
     ))
 }
 
@@ -131,6 +181,10 @@ fn parse(arguments: &[String]) -> Result<Invocation, Abort> {
     let mut quality = DEFAULT_QUALITY;
     let mut dpi = DEFAULT_DPI;
     let mut page_sizing = PageSizing::default();
+    let mut text: Option<String> = None;
+    let mut mark = Mark::default();
+    let mut seed: Option<u64> = None;
+    let mut jitter = true;
     let mut positional_only = false;
 
     if arguments.is_empty() {
@@ -198,6 +252,83 @@ fn parse(arguments: &[String]) -> Result<Invocation, Abort> {
                     }
                 };
             }
+            "-m" | "--mark" => {
+                let value = take_value(flag, inline, arguments, &mut index)?;
+                if text.is_some() {
+                    return Err(Abort::Usage("`--mark` given more than once".into()));
+                }
+                text = Some(value.to_string());
+            }
+            "--mark-size" => {
+                // Shown to the user as a percent, because "3.5" reads better
+                // than "0.035" on a command line; the engine wants a fraction.
+                let percent = number(flag, inline, arguments, &mut index)?;
+                mark.font_size_ratio = percent / 100.0;
+                if !(MIN_FONT_SIZE_RATIO..=MAX_FONT_SIZE_RATIO).contains(&mark.font_size_ratio) {
+                    return Err(Abort::Usage(format!(
+                        "`--mark-size` wants a percent from {:.0} to {:.0}, not `{percent}`",
+                        MIN_FONT_SIZE_RATIO * 100.0,
+                        MAX_FONT_SIZE_RATIO * 100.0
+                    )));
+                }
+            }
+            "--mark-angle" => {
+                mark.angle_degrees = number(flag, inline, arguments, &mut index)?;
+                if !(-90.0..=90.0).contains(&mark.angle_degrees) {
+                    return Err(Abort::Usage(
+                        "`--mark-angle` wants degrees from -90 to 90".into(),
+                    ));
+                }
+            }
+            "--mark-opacity" => {
+                mark.opacity = number(flag, inline, arguments, &mut index)?;
+                if !(MIN_OPACITY..=MAX_OPACITY).contains(&mark.opacity) {
+                    return Err(Abort::Usage(format!(
+                        "`--mark-opacity` wants a number from {MIN_OPACITY} to {MAX_OPACITY}"
+                    )));
+                }
+            }
+            "--mark-colour" => {
+                let value = take_value(flag, inline, arguments, &mut index)?;
+                mark.colour = hex_colour(value).ok_or_else(|| {
+                    Abort::Usage(format!(
+                        "`--mark-colour` wants six hexadecimal digits such as `1a1a1a`, not `{value}`"
+                    ))
+                })?;
+            }
+            "--mark-density" => {
+                let value = take_value(flag, inline, arguments, &mut index)?;
+                mark.density = match value {
+                    "low" => TileDensity::Low,
+                    "normal" => TileDensity::Normal,
+                    "high" => TileDensity::High,
+                    other => {
+                        return Err(Abort::Usage(format!(
+                            "`--mark-density` wants `low`, `normal` or `high`, not `{other}`"
+                        )));
+                    }
+                };
+            }
+            "--mark-blur" => {
+                let percent = number(flag, inline, arguments, &mut index)?;
+                mark.blur_ratio = percent / 100.0;
+                if !(0.0..=MAX_BLUR_RATIO).contains(&mark.blur_ratio) {
+                    return Err(Abort::Usage(format!(
+                        "`--mark-blur` wants a percent from 0 to {:.0}, not `{percent}`",
+                        MAX_BLUR_RATIO * 100.0
+                    )));
+                }
+            }
+            "--seed" => {
+                let value = take_value(flag, inline, arguments, &mut index)?;
+                seed = Some(value.parse::<u64>().map_err(|_| {
+                    Abort::Usage(format!(
+                        "`--seed` wants a whole number from 0 to {}, not `{value}`",
+                        u64::MAX
+                    ))
+                })?);
+            }
+            "--no-jitter" => jitter = false,
             other if other.starts_with('-') && other.len() > 1 => {
                 return Err(Abort::Usage(format!("unrecognised option `{other}`")));
             }
@@ -208,10 +339,54 @@ fn parse(arguments: &[String]) -> Result<Invocation, Abort> {
     let input = input.ok_or_else(|| Abort::Usage("no input file given".into()))?;
     let output = output
         .ok_or_else(|| Abort::Usage("no output file given; pass `-o <output.pdf>`".into()))?;
+    // Every appearance flag is ignored without `--mark`, and saying so is
+    // better than silently producing an unmarked PDF for somebody who meant to
+    // watermark it and mistyped the one flag that matters.
+    let mark = match text {
+        Some(text) => Some(Mark { text, ..mark }),
+        None if mark != Mark::default() || seed.is_some() || !jitter => {
+            return Err(Abort::Usage(
+                "watermark options were given but no `--mark TEXT`, so there would be \
+                 no watermark to apply them to"
+                    .into(),
+            ));
+        }
+        None => None,
+    };
+    if let Some(mark) = &mark {
+        // Name every character the font cannot draw, rather than the one the
+        // engine's error can carry.
+        let missing = unsupported_characters(&mark.text).unwrap_or_default();
+        if !missing.is_empty() {
+            let named: Vec<String> = missing
+                .iter()
+                .map(|c| format!("{c:?} (U+{:04X})", u32::from(*c)))
+                .collect();
+            return Err(Abort::Usage(format!(
+                "the mark text contains {} the bundled font cannot draw: {}",
+                if named.len() == 1 {
+                    "a character"
+                } else {
+                    "characters"
+                },
+                named.join(", ")
+            )));
+        }
+        if mark.colour_is_too_pale() {
+            eprintln!(
+                "pochoir: warning: this mark colour is light enough that a \
+                 black-and-white photocopy may lose it"
+            );
+        }
+    }
+
     let options = OutputOptions {
         quality,
         dpi,
         page_sizing,
+        mark,
+        seed,
+        jitter,
     };
     // The engine validates too, but failing here means failing before the file
     // is read, with a message about the command line rather than the document.
@@ -234,6 +409,34 @@ fn set_input(slot: &mut Option<PathBuf>, value: &str) -> Result<(), Abort> {
     }
     *slot = Some(PathBuf::from(value));
     Ok(())
+}
+
+/// An option's value, parsed as a number.
+fn number(
+    flag: &str,
+    inline: Option<&str>,
+    arguments: &[String],
+    index: &mut usize,
+) -> Result<f32, Abort> {
+    let value = take_value(flag, inline, arguments, index)?;
+    value
+        .parse::<f32>()
+        .ok()
+        .filter(|v| v.is_finite())
+        .ok_or_else(|| Abort::Usage(format!("`{flag}` wants a number, not `{value}`")))
+}
+
+/// Six hexadecimal digits, with or without a leading `#`.
+fn hex_colour(value: &str) -> Option<[u8; 3]> {
+    let digits = value.strip_prefix('#').unwrap_or(value);
+    if digits.len() != 6 || !digits.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    let mut out = [0u8; 3];
+    for (index, byte) in out.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&digits[index * 2..index * 2 + 2], 16).ok()?;
+    }
+    Some(out)
 }
 
 /// The value of an option, whether it arrived after `=` or as the next word.
@@ -262,7 +465,7 @@ mod tests {
         words.iter().map(|w| (*w).to_string()).collect()
     }
 
-    fn usage_message(words: &[&str]) -> String {
+    pub(super) fn usage_message(words: &[&str]) -> String {
         match parse(&args(words)) {
             Err(Abort::Usage(message)) => message,
             Err(Abort::Help) => panic!("{words:?} asked for help, not a usage error"),
@@ -420,5 +623,177 @@ mod tests {
     fn a_lone_dash_is_a_filename_not_an_option() {
         let invocation = parse(&args(&["-", "-o", "out.pdf"])).expect("parses");
         assert_eq!(invocation.input.to_str(), Some("-"));
+    }
+}
+
+#[cfg(test)]
+mod mark_tests {
+    use super::tests::usage_message;
+    use super::{USAGE, hex_colour, parse};
+    use pochoir_core::TileDensity;
+    use pochoir_core::mark::{
+        DEFAULT_ANGLE_DEGREES, DEFAULT_BLUR_RATIO, DEFAULT_FONT_SIZE_RATIO, DEFAULT_OPACITY,
+    };
+
+    fn args(words: &[&str]) -> Vec<String> {
+        words.iter().map(|w| (*w).to_string()).collect()
+    }
+
+    #[test]
+    fn no_mark_flag_means_no_watermark() {
+        let invocation = parse(&args(&["a.jpg", "-o", "o.pdf"])).expect("parses");
+        assert!(invocation.options.mark.is_none());
+        assert!(invocation.options.jitter, "jitter is on by default");
+        assert_eq!(invocation.options.seed, None);
+    }
+
+    #[test]
+    fn the_mark_text_is_taken_verbatim() {
+        for words in [
+            &["a.jpg", "-o", "o.pdf", "-m", "destiné à une agence"][..],
+            &["a.jpg", "-o", "o.pdf", "--mark", "destiné à une agence"][..],
+            &["a.jpg", "-o", "o.pdf", "--mark=destiné à une agence"][..],
+        ] {
+            let invocation = parse(&args(words)).unwrap_or_else(|_| panic!("{words:?}"));
+            let mark = invocation.options.mark.expect("a mark");
+            assert_eq!(mark.text, "destiné à une agence");
+        }
+    }
+
+    #[test]
+    fn the_appearance_flags_reach_the_engine() {
+        let invocation = parse(&args(&[
+            "a.jpg",
+            "-o",
+            "o.pdf",
+            "-m",
+            "destiné",
+            "--mark-size=7.5",
+            "--mark-angle=-45",
+            "--mark-opacity=0.5",
+            "--mark-colour=#204080",
+            "--mark-density=high",
+            "--mark-blur=3",
+            "--seed=4242",
+            "--no-jitter",
+        ]))
+        .expect("parses");
+        let options = invocation.options;
+        // The whole set must be acceptable to the engine, checked before the
+        // mark is moved out for the field assertions.
+        options.validate().expect("the engine must accept these");
+        let mark = options.mark.clone().expect("a mark");
+        assert!(
+            (mark.font_size_ratio - 0.075).abs() < 1e-6,
+            "percent to fraction"
+        );
+        assert_eq!(mark.angle_degrees, -45.0);
+        assert_eq!(mark.opacity, 0.5);
+        assert_eq!(mark.colour, [0x20, 0x40, 0x80]);
+        assert_eq!(mark.density, TileDensity::High);
+        assert!((mark.blur_ratio - 0.03).abs() < 1e-6);
+        assert_eq!(options.seed, Some(4242));
+        assert!(!options.jitter);
+    }
+
+    #[test]
+    fn appearance_flags_without_a_mark_are_an_error_rather_than_silently_ignored() {
+        for flag in [
+            "--mark-size=5",
+            "--mark-angle=0",
+            "--mark-opacity=0.5",
+            "--mark-colour=000000",
+            "--mark-density=high",
+            "--mark-blur=2",
+            "--seed=1",
+            "--no-jitter",
+        ] {
+            let message = usage_message(&["a.jpg", "-o", "o.pdf", flag]);
+            assert!(message.contains("no `--mark TEXT`"), "{flag}: {message}");
+        }
+    }
+
+    #[test]
+    fn out_of_range_mark_values_are_refused_with_the_range_in_the_message() {
+        let cases: [(&str, &str); 8] = [
+            ("--mark-size=0.5", "1 to 10"),
+            ("--mark-size=11", "1 to 10"),
+            ("--mark-angle=91", "-90 to 90"),
+            ("--mark-opacity=0.01", "0.05 to 0.8"),
+            ("--mark-opacity=0.9", "0.05 to 0.8"),
+            ("--mark-blur=7", "0 to 6"),
+            ("--mark-colour=xyz", "hexadecimal"),
+            ("--mark-density=medium", "`low`, `normal` or `high`"),
+        ];
+        for (flag, expected) in cases {
+            let message = usage_message(&["a.jpg", "-o", "o.pdf", "-m", "x", flag]);
+            assert!(message.contains(expected), "{flag}: {message}");
+        }
+    }
+
+    #[test]
+    fn text_the_font_cannot_draw_is_refused_with_every_character_named() {
+        let message = usage_message(&["a.jpg", "-o", "o.pdf", "-m", "Document 漢 et ✓"]);
+        assert!(message.contains('漢'), "{message}");
+        assert!(message.contains('✓'), "{message}");
+        assert!(message.contains("U+6F22"), "{message}");
+        assert!(
+            message.contains("characters"),
+            "both should be named: {message}"
+        );
+        // One bad character reads as singular.
+        let single = usage_message(&["a.jpg", "-o", "o.pdf", "-m", "Document 漢"]);
+        assert!(single.contains("a character"), "{single}");
+    }
+
+    #[test]
+    fn a_repeated_mark_flag_is_refused() {
+        let message = usage_message(&["a.jpg", "-o", "o.pdf", "-m", "one", "-m", "two"]);
+        assert!(message.contains("more than once"), "{message}");
+    }
+
+    #[test]
+    fn mark_options_need_their_values() {
+        for flag in [
+            "-m",
+            "--mark",
+            "--mark-size",
+            "--mark-angle",
+            "--mark-opacity",
+            "--mark-colour",
+            "--mark-density",
+            "--mark-blur",
+            "--seed",
+        ] {
+            let message = usage_message(&["a.jpg", "-o", "o.pdf", flag]);
+            assert!(message.contains("needs a value"), "{flag}: {message}");
+        }
+    }
+
+    #[test]
+    fn hex_colours_parse_with_or_without_a_hash() {
+        assert_eq!(hex_colour("1a1a1a"), Some([0x1A, 0x1A, 0x1A]));
+        assert_eq!(hex_colour("#1A1A1A"), Some([0x1A, 0x1A, 0x1A]));
+        assert_eq!(hex_colour("ffffff"), Some([0xFF, 0xFF, 0xFF]));
+        for bad in ["", "#", "1a1a1", "1a1a1a1", "zzzzzz", "1a 1a1a", "#xyzxyz"] {
+            assert_eq!(hex_colour(bad), None, "{bad:?} should not parse");
+        }
+    }
+
+    #[test]
+    fn the_help_text_quotes_the_engines_own_defaults() {
+        // Two numbers that have to agree, so the help cannot drift away from
+        // what the engine actually does.
+        for expected in [
+            format!("default {})", DEFAULT_FONT_SIZE_RATIO * 100.0),
+            format!("default {})", DEFAULT_ANGLE_DEGREES),
+            format!("default {:.2})", DEFAULT_OPACITY),
+            format!("default {})", DEFAULT_BLUR_RATIO * 100.0),
+        ] {
+            assert!(
+                USAGE.contains(&expected),
+                "the help text does not say {expected:?}"
+            );
+        }
     }
 }

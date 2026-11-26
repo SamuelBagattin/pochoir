@@ -225,6 +225,7 @@ fn the_page_is_the_images_own_aspect_ratio_at_the_chosen_dpi() {
                 quality: 75,
                 dpi,
                 page_sizing: PageSizing::Native,
+                ..OutputOptions::default()
             };
             let pdf = image_to_pdf(&bytes, &options).expect("renders");
             let (page_width, page_height) = media_box(&pdf);
@@ -330,6 +331,7 @@ fn an_image_page_is_capped_to_a4_but_never_enlarged_to_it() {
                 quality: 60,
                 dpi,
                 page_sizing: PageSizing::CapToA4,
+                ..OutputOptions::default()
             },
         )
         .expect("renders");
@@ -352,6 +354,7 @@ fn an_image_page_is_capped_to_a4_but_never_enlarged_to_it() {
                 quality: 60,
                 dpi,
                 page_sizing: PageSizing::Native,
+                ..OutputOptions::default()
             },
         )
         .expect("renders");
@@ -374,6 +377,7 @@ fn the_cap_changes_the_page_and_nothing_else() {
         quality: 85,
         dpi: 50.0,
         page_sizing: PageSizing::CapToA4,
+        ..OutputOptions::default()
     };
     let capped = image_to_pdf(&bytes, &options).expect("renders");
     let native = image_to_pdf(
@@ -426,6 +430,7 @@ fn the_embedded_jpeg_reports_the_resolution_the_page_really_prints_at() {
             quality: 60,
             dpi: 200.0,
             page_sizing: PageSizing::CapToA4,
+            ..OutputOptions::default()
         },
     )
     .expect("renders");
@@ -445,6 +450,7 @@ fn the_embedded_jpeg_reports_the_resolution_the_page_really_prints_at() {
             quality: 60,
             dpi: 200.0,
             page_sizing: PageSizing::Native,
+            ..OutputOptions::default()
         },
     )
     .expect("renders");

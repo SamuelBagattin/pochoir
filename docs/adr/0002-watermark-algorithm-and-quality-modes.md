@@ -210,6 +210,31 @@ default to it.
 | Blur | small, σ ≈ 0.6 px at render resolution, scaled with DPI | 0–3 px | See below |
 | Per-run jitter | position only, seeded | on | See below |
 
+> **Partly superseded by [ADR-0007](0007-watermark-specification-corrections.md)
+> (2026-11-26), in four respects only.** The table above is left as written; the
+> four rows that no longer hold are:
+>
+> - **Text** — this table says "up to 200 chars, up to 3 lines" and does not say
+>   what happens when those will not fit together, which at this font size they
+>   frequently will not. ADR-0007 Decision 2: wrap, then shrink to a floor of 1%
+>   of the shorter edge, then **refuse** with an error. Never clip.
+> - **Tile density** — "gaps of 1.6× text width" leaves roughly a thousand
+>   pixels of every row unmarked once the mark is rotated, because a row of
+>   tiles spans the page's diagonal rather than its width. ADR-0007 Decision 5
+>   makes both gaps multiples of the line height. The vertical figure, which is
+>   the one carrying the density, is unchanged.
+> - **Blur** — "σ ≈ 0.6 px at render resolution, scaled with DPI" contradicts
+>   itself, and at 0.6 px three box passes round to a no-op. ADR-0007 Decision 3
+>   keys σ to the font size: default 0.015 of it, range 0–0.06, which is the
+>   same 0–3 px at the default size on A4 at 200 dpi.
+> - **Per-run jitter** — a single global offset satisfies this row's letter but
+>   not the justification two sections below, which asks that "a remover tuned
+>   to fixed tile positions fails". ADR-0007 Decision 4 displaces every tile
+>   independently, still seeded.
+>
+> Everything else in this decision — the font size, the angle, the opacity, the
+> colour and the reasoning for each — stands.
+
 ### Text encoding: normalise to NFC
 
 The mark text must be normalised to **NFC** before layout. Text arriving from
@@ -221,6 +246,15 @@ as a bare letter followed by a stray floating accent. Since the target language
 is French, this is not an edge case: `é è ç à ô û ï` are ordinary input. NFC
 composition for the Latin-1/Latin Extended-A range we care about is a small
 lookup table, not a Unicode library.
+
+> **Extended by [ADR-0007](0007-watermark-specification-corrections.md)
+> (2026-11-26).** This section does not say what happens when NFC's output, or
+> the input itself, is a character the bundled font subset lacks — which would
+> draw as a `.notdef` box in the middle of a watermark. ADR-0007 Decision 6
+> adds a test that the composition table's outputs are all covered by the
+> subset, and a run-time check that refuses mark text with unsupported
+> characters, naming them, rather than drawing tofu or dropping them. The
+> reasoning above is unchanged.
 
 ### On the official tool's jitter and blur
 
