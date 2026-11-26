@@ -343,6 +343,21 @@ My steer to `adr-design`: the lean rule is honoured by splitting the pipeline by
 path (photo in → PDF out) is hand-rolled with near-zero third-party rendering code. PDF *input* is
 the one unavoidable dependency and goes behind a trait plus a lazily-loaded module.
 
+## Context budget (checked 2026-11-26, after Samuel reminded me)
+
+| session | context | action |
+|---|---|---|
+| orchestrator (me) | 499 157 / 1 000 000 — **50%** | watch; messages are 40% of it |
+| phase-2 engine | 499 649 / 1 000 000 — **50%** | **rotating now**, before phase 2 rather than during it |
+| adr-0004-attestation | 239 279 / 1 000 000 — 24% | fine, finishing a docs task |
+
+The standing rule is rotate at ~300k. I had never looked at the number until Samuel asked, and the
+engine session was at 500k with the project's largest implementation just briefed to it. Rotation
+is cheap at a boundary and expensive mid-task, so: the engine session writes
+`phase2-handover.md` to the shared notes folder and stands down; a fresh session takes phase 2
+from that note. **Check this after every couple of merges, and always before briefing a big
+phase.**
+
 ## Decisions I took on the ADR open questions, 2026-11-26
 
 The design session listed seven items as needing Samuel. Six of them are mine under his own
