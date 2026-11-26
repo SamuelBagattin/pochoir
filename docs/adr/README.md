@@ -1,6 +1,6 @@
 # Architecture decision records
 
-This directory holds the architecture decision records (ADRs) for `filigrane`.
+This directory holds the architecture decision records (ADRs) for **Pochoir**.
 
 An ADR captures **one** architecturally significant decision: the context that
 forced it, the options we weighed, what we chose, and what we now have to live

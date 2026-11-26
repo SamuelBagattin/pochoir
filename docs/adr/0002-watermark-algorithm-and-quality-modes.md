@@ -7,7 +7,7 @@
 
 ## Context
 
-`filigrane` watermarks identity and administrative documents so that a copy sent
+**Pochoir** watermarks identity and administrative documents so that a copy sent
 to a landlord, an employer or an agency cannot easily be reused elsewhere. The
 reference implementation is the French government's **Filigrane Facile**
 (<https://filigrane.beta.gouv.fr/>), whose behaviour we know from its source:
@@ -46,6 +46,11 @@ pixels, and what we promise the user.
 
 **We will composite the watermark into the page bitmap.** The default pipeline
 rasterises, blends, re-encodes.
+
+This is the decision the product is named after. A *pochoir* is a stencil: once
+you have sprayed through one, the paint is in the paper and there is nothing to
+peel off. That is the whole of our technical commitment here, and the rest of
+this section is about what it costs.
 
 A PDF watermark can also be added *non-destructively*, as an annotation or as
 extra operators appended to the page content stream. We reject that as the
@@ -332,8 +337,8 @@ Named for the record, because these are the ones that matter:
 
 | Field | Value |
 | --- | --- |
-| `/Producer` | `filigrane` — constant, **no version number** |
-| `/Creator` | `filigrane` — constant |
+| `/Producer` | `Pochoir` — constant, **no version number** |
+| `/Creator` | `Pochoir` — constant |
 | `/CreationDate`, `/ModDate` | **absent** |
 | `/Author`, `/Title`, `/Subject`, `/Keywords` | **absent** |
 | XMP packet | **absent** |

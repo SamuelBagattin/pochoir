@@ -7,7 +7,7 @@
 
 ## Context
 
-`filigrane` watermarks identity and administrative documents. It exists because
+**Pochoir** watermarks identity and administrative documents. It exists because
 the French government's Filigrane Facile
 (<https://filigrane.beta.gouv.fr/>) uploads your identity document to a server,
 and because it degrades the document it returns (see
@@ -34,6 +34,21 @@ These are decided and this ADR records rather than re-opens them:
   SvelteKit.
 - **Cloudflare Workers static assets** for hosting.
 - **No backend, no database, no accounts, no analytics.**
+
+### A note on names
+
+The product is **Pochoir**, at `pochoir.app`, and the repository is public at
+<https://github.com/SamuelBagattin/pochoir>. ADR prose uses that name.
+
+**Code identifiers do not match it yet, deliberately.** The workspace crates are
+`filigrane-core` and `filigrane-cli` as they exist today, and the rename is being
+folded into the first implementation session so that it lands as one commit
+rather than as churn across live branches. So wherever these ADRs cite a crate,
+a path or a CI target, the identifier is written as it is on `main` today, not as
+it will read after the rename. Where "filigrane" appears as the ordinary French
+word for a watermark, or as part of **Filigrane Facile** — the government service
+this project exists to improve on — it stays, because that is still the thing we
+produce and still what users search for.
 
 ## Part 1 — The stack
 
@@ -124,6 +139,46 @@ which formats fail, where users give up, or whether a release broke something.
 That is a real cost, paid deliberately. What we get instead: a public issue
 tracker, and an "export diagnostic report" button that composes a text blob the
 **user** inspects and sends, if they choose to.
+
+### Public auditability is now part of the claim
+
+The repository is public. That is not incidental to the product: a privacy tool
+whose source nobody can read is an assertion, not a guarantee, and "nothing
+leaves your device" is exactly the kind of claim a user cannot check from the
+outside.
+
+But publishing source does not, by itself, prove anything about what the user
+actually runs. **They execute whatever the CDN served them, not what is on
+GitHub**, and for a web-delivered tool that gap is the real weak link — far more
+so than for a downloadable binary, because the bytes can change silently on any
+deploy. Being public therefore sharpens three requirements rather than
+satisfying them:
+
+1. **No obfuscated or unmappable build.** The shipped bundle must be
+   reconstructible from the repository with one documented command, and we ship
+   source maps.
+2. **Reproducible builds, with a published hash of the deployed bundle**, so that
+   a third party can rebuild from a tag and compare. This was listed below as
+   "worth a future ADR"; being publicly auditable promotes it to something we
+   should do early, because it is the only thing that closes the
+   source-to-served-bytes gap.
+3. **Determinism earns its keep twice.** ADR-0002's requirement that output be a
+   pure function of input and parameters exists for golden tests, but it is also
+   what makes an independent rebuild comparable at all.
+
+The strict CSP described above belongs in the same group: a `connect-src 'self'`
+that forbids outbound requests is evidence a reviewer can read off the response
+headers.
+
+**What this does *not* do is settle the licence question**, and it is worth
+saying why, because the intuition runs the other way. If anything, public
+auditability leans *toward* the copyleft recommendation below rather than away
+from it: AGPL §13 keeps downstream network deployments auditable too, whereas a
+permissive licence specifically permits a closed, non-auditable fork that keeps
+our privacy language intact. The fair counter is that a permissive licence
+maximises the number of people who read and reuse the code, and that the
+auditability of *our own* deployment is unaffected either way. Both points are
+recorded in the open question; neither changes the recommendation.
 
 **Alternative considered: an optional server-side mode** for very large
 documents or old browsers. Rejected outright. The moment a server-side mode
@@ -324,8 +379,9 @@ The distinction we draw is **runtime versus build-time**:
 This is a real weakening, and it is the honest place for it. A compromised build
 tool could inject anything into the shipped bundle, so "build-time only" is not
 "harmless" — it is "a different risk, managed differently". Reproducible builds
-and a published hash of the deployed bundle would be the proper mitigation, and
-are worth a future ADR.
+and a published hash of the deployed bundle are the proper mitigation, and now
+that the repository is public they are a near-term requirement rather than a
+nicety — they deserve their own ADR soon.
 
 ### Rule: every future dependency needs its own ADR
 
@@ -423,7 +479,9 @@ recommendation below is accepted.
       licence term that addresses exactly that case — a modified version offered
       over a network must publish its source — so the licence and the product
       thesis point the same way. All dependencies chosen above are
-      `MIT OR Apache-2.0`-style and compatible with it.
+      `MIT OR Apache-2.0`-style and compatible with it. The repository being
+      public does not decide this either way — see *Public auditability* above
+      for why it slightly favours copyleft rather than permissive.
 
       **Runner-up: `MIT OR Apache-2.0`** (the Rust ecosystem default), which
       maximises reuse and would let the core crate be adopted as a library. It
