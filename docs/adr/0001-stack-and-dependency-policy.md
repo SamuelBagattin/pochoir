@@ -481,8 +481,14 @@ recommendation below is accepted.
 
 ## Open questions
 
-- [ ] **Needs decision from Samuel — licensing. This is the big one, and we are
+- [x] **Needs decision from Samuel — licensing. This is the big one, and we are
       deliberately not deciding it.**
+
+      **Decided 2026-11-26 and superseded in this respect only by
+      [ADR-0005](0005-licensing.md): the project is split-licensed — the crates
+      `MIT OR Apache-2.0`, the application `AGPL-3.0-or-later` — so the
+      recommendation below was accepted for the application and declined for the
+      engine. The reasoning below is left as written.**
 
       The scaffolding currently carries `license = "UNLICENSED"` and no `LICENSE`
       file, which means that today **nobody may legally use or contribute to the

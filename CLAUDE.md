@@ -52,10 +52,10 @@ Then commit the diff alongside the ADR that justifies it.
 - The Rust engine and CLI — `crates/pochoir-core`, `crates/pochoir-cli` — are `MIT OR Apache-2.0`, so integrators and distribution packagers can use them. `LICENSE-MIT` and `LICENSE-APACHE` at the root.
 - The web application and the site, including any future `app/` or `web/` directory, are `AGPL-3.0-or-later`. `LICENSE-AGPL` at the root. §13 is the point: anyone who forks Pochoir into a hosted service has to publish what they are running.
 - `license` in `Cargo.toml` describes the crates only. It is not a statement about the application.
-- Decided by Samuel on 2026-11-26. ADR-0001 had recommended AGPL throughout, with `MIT OR Apache-2.0` as runner-up; the split takes the §13 protection where it matters and keeps the reuse.
+- Decided by Samuel on 2026-11-26 and recorded in [ADR-0005](docs/adr/0005-licensing.md), which supersedes ADR-0001's licensing recommendation in that respect only.
 
 ## Decisions
 
 - `docs/adr/` holds the architecture decision records.
 - Anything non-obvious gets one: a dependency, a file format choice, a rendering approach, a hosting decision.
-- ADR-0001, ADR-0002 and ADR-0003 are **Accepted** as of 2026-11-26 and are binding; a divergence between the code and an accepted ADR is a bug in one or the other. ADR-0004 is reserved for build reproducibility and bundle attestation, and is not written yet.
+- ADR-0001, ADR-0002, ADR-0003 and ADR-0005 are **Accepted** as of 2026-11-26 and are binding; a divergence between the code and an accepted ADR is a bug in one or the other. ADR-0004 is reserved for build reproducibility and bundle attestation, and is not written yet.

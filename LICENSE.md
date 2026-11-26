@@ -43,11 +43,14 @@ licence.
 
 ## Notes
 
-- [ADR-0001](docs/adr/0001-stack-and-dependency-policy.md) recommended
-  `AGPL-3.0-or-later` for the whole project and recorded `MIT OR Apache-2.0` as
-  the runner-up. Samuel chose this split instead, on 2026-11-26: it takes the
-  §13 protection where it matters and keeps the reuse the runner-up was arguing
-  for. The ADR's reasoning stands as written; this file is the decision.
+- **[ADR-0005](docs/adr/0005-licensing.md) is the decision record**, with the
+  options weighed, the reasoning, and the honest costs — including that the
+  permissively licensed engine may be embedded in a closed product.
+  [ADR-0001](docs/adr/0001-stack-and-dependency-policy.md) had recommended
+  `AGPL-3.0-or-later` for the whole project with `MIT OR Apache-2.0` as the
+  runner-up; ADR-0005 supersedes that recommendation **in that respect only**,
+  and ADR-0001's reasoning is otherwise left as written. This file is the
+  operative notice; ADR-0005 is why.
 - Every third-party dependency adopted in ADR-0001 is `MIT OR Apache-2.0`-style
   and compatible with both halves.
 - `Cargo.toml` carries `license = "MIT OR Apache-2.0"` because it describes the
