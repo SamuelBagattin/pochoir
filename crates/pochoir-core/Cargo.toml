@@ -11,8 +11,27 @@ repository.workspace = true
 [lib]
 crate-type = ["lib", "cdylib"]
 
-# Intentionally empty: this crate has zero third-party dependencies and is
-# meant to stay that way. See CLAUDE.md and docs/adr/ before adding one.
+# The only two third-party crates in this project, both justified by ADR-0001:
+# they parse hostile input, which is the one case where its "hand-roll
+# everything that writes" rule says to depend rather than write our own.
+# Everything that *writes* here - the JPEG encoder, the PDF writer, the EXIF
+# reader - is ours.
+#
+# `default-features = false` on both, for two reasons. ADR-0001 warns that a
+# crate's defaults can carry a `rayon` that is a sequential stub on wasm32; and
+# in `zune-jpeg`'s case the `x86` and `neon` defaults select SIMD decode paths,
+# which would mean the native build and the wasm build decoding the same JPEG
+# through different code. ADR-0002 requires byte-identical output on both
+# targets, so a scalar-only decoder is not a cost here, it is the requirement.
 [dependencies]
+zune-jpeg = { version = "0.5.15", default-features = false, features = ["std"] }
+png = { version = "0.18.1", default-features = false }
 
+# The same two crates, used by the integration tests to verify our writers
+# against an independent reader and to build PNG fixtures. `cargo tree
+# --edges normal` excludes dev-dependencies, so these change neither allowlist;
+# they are already in the lock file, so they change no count either. Verified
+# by `make deps-check` rather than assumed.
 [dev-dependencies]
+zune-jpeg = { version = "0.5.15", default-features = false, features = ["std"] }
+png = { version = "0.18.1", default-features = false }

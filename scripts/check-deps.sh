@@ -48,8 +48,19 @@ set -eu
 
 # --- Configuration -----------------------------------------------------------
 
-# Global [[package]] budget. Today: exactly the two workspace crates.
-THRESHOLD=2
+# Global [[package]] budget. Measured, never copied from a document:
+#
+#     grep -c '^\[\[package\]\]' Cargo.lock
+#
+# 15 = the two workspace crates, plus the 11 third-party crates in the common
+# path's runtime closure (see the allowlists), plus two entries the closure does
+# not contain: `miniz_oxide` is locked twice (0.8 for `png`, 0.9 for `flate2`),
+# and `zlib-rs` is locked as an optional `flate2` backend we do not enable. That
+# gap between the lock file and the closure is exactly why check 2 exists.
+#
+# ADR-0001 predicted 14 for this step. The real figure is 15. Trust this one: it
+# came from the command above.
+THRESHOLD=15
 
 WASM_TARGET="wasm32-unknown-unknown"
 ALLOWLIST_DIR="scripts/allowlist"
