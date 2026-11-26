@@ -99,6 +99,53 @@ Quality notes: `#![forbid(unsafe_code)]` on both crates, `#![deny(missing_docs)]
 `Display` + `core::error::Error`. `check-deps.sh` is POSIX, `set -eu`, and its failure message
 names the ADR requirement.
 
+## The rotation, and what came with it
+
+The engine session had already started phase 2 before my rotation message reached it, and parked
+the work rather than binning it. I kept it: **`claude/watermark-mark` merged to `main` as
+`3ae2ee0`** — a Roboto Regular subset (21 052 bytes, 347 glyphs) with its licence and provenance,
+`scripts/subset-font.py`, and `make font-subset`. I verified the part that would have been
+expensive to get wrong: `googlefonts/roboto` (now `roboto-2`) is Apache-2.0 with a single LICENSE
+and no OFL, and upstream `src/hinted/Roboto-Regular.ttf` is 515 100 bytes with sha256
+`56a45233…664d`, matching the README exactly. The reasoning for Roboto over the better-covered OFL
+families is the valuable part: a subset is a derivative work, so OFL's Reserved Font Name clause
+would need reasoning about, while Apache-2.0 adds no licence family we do not already carry.
+It also wrote ~540 lines of TrueType parser and **deliberately kept it out of the repo** because it
+was never compiled — it sits in the notes folder labelled as notes. Right call.
+
+### My rulings on ADR-0002's seven collisions with reality
+
+The hand-over's section 8 found genuine defects in our own specification. Decided by me, to be
+recorded by the phase-2 session as **ADR-0007**, scoped to supersede ADR-0002 on items 2, 3, 4
+and 7 only:
+
+1. One column of text at a realistic mark length **is** the intent; the horizontal gap rarely
+   engages and the 6–10 repetitions are rows. Note it, change nothing.
+2. **Long text wraps, then shrinks, then refuses — never clips.** Clipping "Document destiné
+   exclusivement à une demande de location" into "Document destiné exclusiv" silently changes what
+   the document asserts. For this product that is a correctness bug, not a cosmetic one.
+3. **Blur keyed to font size**, not pixels: the spec's "at render resolution, scaled with DPI"
+   contradicts itself and rounds to a no-op at its own default. Plus a test that the default blur
+   demonstrably changes pixels. Still described as antialiasing, never as a defence.
+4. **Per-tile jitter, not one global offset.** The ADR's letter allows the weaker version; its own
+   justification ("a remover tuned to fixed tile positions fails") demands the stronger one.
+5. `--seed` / `--no-jitter` exist in the spec but not in `OutputOptions`; add them in the same
+   commit as the mark.
+6. Add the golden-hash hook.
+7. **NFC output must stay inside the font subset** — a test that the composition table's outputs
+   are all in the subset's `cmap`, and runtime validation that names unsupported characters rather
+   than drawing tofu.
+
+Build-order instruction carried from the hand-over, because it is right: **rasteriser and a PGM
+dump before any layout, and `é` rendering on day one** — it is a composite glyph, so composite
+parsing is on the critical path, and until it renders the NFC decision is untestable.
+
+### Also noted from the hand-over
+
+- `LICENSE.md` may want a line recording the bundled Apache-2.0 font. That is Apache-2.0 §4
+  attribution bookkeeping rather than a policy change, so it can be added — but ADR-0005 makes
+  licensing Samuel's, so tell him rather than deciding the framing.
+
 ## Reserved numbers
 
 - ADR-0001 stack and dependency policy — `adr-design`, merged, `Proposed`
@@ -116,7 +163,10 @@ names the ADR requirement.
   Put the **wasm artifacts** at the centre of it: that is what a reviewer is least able to eyeball
   and where a substituted build would be hardest to notice. A hash over the HTML and JS while the
   wasm goes unattested would be security theatre.
-- ADR-0005 and up: unassigned.
+- ADR-0005 licensing — merged, `Accepted`
+- ADR-0006 image page size cap — merged, `Accepted`
+- **ADR-0007 watermark specification corrections — reserved for the phase-2 session**
+- ADR-0008 and up: unassigned.
 
 ## Merge queue
 
@@ -216,7 +266,8 @@ names the ADR requirement.
 
 | session | id | owns |
 |---|---|---|
-| phase-2 (the mark) | `local_79c8214b-fbda-4eb6-adc4-d0f6590b8dbe` | `crates/`, `scripts/` |
+| ~~engine~~ | `local_79c8214b-fbda-4eb6-adc4-d0f6590b8dbe` | **rotated out at 500k**; wrote `phase2-handover.md` (347 lines) and stood down |
+| phase2-mark | proposed, `task_8dc04234` | `crates/`, `scripts/`, `docs/adr/0007-*` |
 | adr-0004-attestation | `local_082f38c0-9661-4149-b091-797afa5b08a3` | `docs/adr/0004-*` and its one row in `docs/adr/README.md` |
 
 Only shared file is the ADR index README, one row each — a trivial conflict I resolve at merge.
