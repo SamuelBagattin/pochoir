@@ -219,12 +219,43 @@ code-change order and found none — the defensible claim is purely technical.
    rather than a rewrite. The beachhead is France, the search traffic is French, and the mark
    presets (location, banque, mutuelle) are French administrative concepts.
 
-### Consequence for the UI brief
+### Parallelism — I was wrong, and Samuel was right to push
 
-The UI session cannot start until phase 2 merges — the wasm binding crate lives in `crates/`,
-which phase 2 owns. An Astro shell in a new `web/` directory would not conflict, but the live
-preview is the heart of the UI and needs the bindings, so a shell built first would be mostly
-layout. Samuel said "after phase 2 lands"; respect that.
+I said the three MVP pieces were sequential "because they all touch each other". On inspection
+that was a reflex, not an analysis. The UI writes **only `web/`** while phase 2 owns `crates/`, so
+they cannot collide at all, and the UI and the bindings collide at exactly one point — the ABI —
+which is mine to fix in advance rather than a reason to serialise. **Both are now running.**
+
+**The ABI contract I fixed** so the UI is not blocked (provisional; the bindings session may
+improve it and I will reconcile): synchronous, called from a Web Worker, no `wasm-bindgen`, plain
+exports over linear memory — `pochoir_alloc`/`pochoir_free`, `pochoir_render_pdf` and
+`pochoir_render_preview` returning a handle to `{status, ptr, len, width, height}` read through
+`pochoir_result_*` accessors. Mark text as a separate UTF-8 buffer; options as a **packed
+little-endian struct, not JSON**, because we are not putting a JSON parser in the core. The UI
+builds against a stub behind that same interface, so swapping in the real module touches one file.
+
+**Deploy plumbing still comes last**, and not from inertia: it configures the thing the UI session
+is building, writing into `web/` for content-addressed filenames, and a deploy pipeline verified
+against an empty directory is one you debug twice.
+
+### Design direction (Samuel, mid-turn)
+
+He does not want something that looks AI-generated. The UI session is to **use Claude in Chrome to
+study real sites first** — YC-shaped products (Linear, Resend, Cal.com, Railway, Supabase,
+PostHog), privacy-pitch products (Plausible, Proton, Tailscale), and Stripe/Vercel for type and
+spacing discipline — then **extract a real system into `web/DESIGN.md` before writing CSS**: type
+scale, spacing scale, colour ramp with AA contrast, radius and shadow policy. Method before vibe,
+because browsing-then-building is how pastiche happens.
+
+Named and banned: purple-blue gradients, giant centred hero type with a vague tagline,
+three-column icon grids, rounded cards floating on a grey wash, emoji in headings, glassmorphism.
+Target: a sober, precise utility someone would trust with a photograph of their passport — "we
+would rather be trusted than impressive", which is the whole project's tone.
+
+**And one constraint I added: do not borrow from the DSFR**, the French state design system that
+Filigrane Facile is built with, Marianne blue `#000091` and all. Looking like a government service
+would be dishonest and is a real legal risk when we compete with an actual state product. Study it
+once to know what to avoid.
 
 ## Reserved numbers
 
@@ -348,6 +379,7 @@ layout. Samuel said "after phase 2 lands"; respect that.
 |---|---|---|
 | ~~engine~~ | `local_79c8214b-fbda-4eb6-adc4-d0f6590b8dbe` | **rotated out at 500k**; wrote `phase2-handover.md` (347 lines) and stood down |
 | phase2-mark | `local_fb5b2705-27b3-4196-86e8-68a2a0ac87f5` — **running** | `crates/`, `scripts/`, `docs/adr/0007-*` |
+| web-ui | `local_afe7d3df-1afe-4f26-afa5-ae1dd17c616c` — **running** | `web/` only, plus `docs/adr/0008-*` if needed |
 | ~~adr-0004-attestation~~ | `local_082f38c0-9661-4149-b091-797afa5b08a3` | done, PR #6 merged as `17ba5d6` |
 
 Only shared file is the ADR index README, one row each — a trivial conflict I resolve at merge.
