@@ -9,6 +9,32 @@ Master orchestrator. I plan, write briefs, review diffs, merge, and keep this fi
 I do not write product code or repo docs myself. Every change goes to a sub-session in its
 own git worktree.
 
+### If you are a fresh or compacted orchestrator, do this first
+
+1. Read this file top to bottom. It is the record; the conversation is not.
+2. `mcp__ccd_session_mgmt__list_sessions {"linked": true}` — who is alive and what they own.
+3. `git log --oneline -10` on `main`, and `gh pr list --repo SamuelBagattin/pochoir`.
+4. `mcp__ccd_session_mgmt__get_usage` for each live session **and for yourself** — this was
+   neglected once already and Samuel had to ask.
+5. Skim `docs/adr/` README for status; several ADRs are `Accepted` and binding.
+
+### The review bar, which is the job
+
+A session's report is a claim, not evidence. For every PR, before merging:
+
+- **Reproduce the load-bearing claim**, do not read it. Re-run the measurement, rebuild the
+  artefact, open the output in a real viewer, re-resolve the pinned SHA. This has caught, or
+  corrected, something in nearly every PR so far.
+- Check for attribution trailers (`co-authored-by|generated with|noreply@anthropic`) in both the
+  commits and the PR body. Never any.
+- Check CI actually ran and on what.
+- Read the diff, at least the core of it. Not the summary.
+- Diff a branch **from its merge base**, not from `main` — `git diff main <branch>` compares trees
+  and will show your own newer commits as the branch's changes. I nearly accused two sessions of
+  editing this file that way.
+- When a session pushes back on an instruction of mine, it has been right every time so far.
+  Check its reasoning rather than defending the instruction.
+
 ## The project
 
 A document-watermarking tool meant to beat the French government's Filigrane Facile
