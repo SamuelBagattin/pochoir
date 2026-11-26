@@ -7,14 +7,14 @@
 //!
 //! # What is here today
 //!
-//! The **write path**: an image goes in, a PDF comes out.
+//! An image goes in, a watermarked PDF comes out.
 //!
 //! ```text
-//! bytes -> image::decode -> ImagePage (a PageSource) -> jpeg::encode -> pdf::PdfWriter
-//!            |                  |                          |                |
-//!         zune-jpeg / png    EXIF orientation,          ours, baseline    ours, /DCTDecode
-//!         (the only two       no resampling             4:4:4             verbatim
-//!          dependencies)
+//! bytes -> image::decode -> ImagePage (a PageSource) -> mark::compose -> jpeg::encode -> pdf::PdfWriter
+//!            |                  |                           |                |               |
+//!         zune-jpeg / png    EXIF orientation,          ours: font,        ours,           ours,
+//!         (the only two       no resampling             raster, blur,      baseline        /DCTDecode
+//!          dependencies)                                rotation           4:4:4           verbatim
 //! ```
 //!
 //! The page an image lands on keeps its aspect ratio and is sized at the
@@ -22,10 +22,15 @@
 //! enlarged to fill. That cap is ADR-0006, which supersedes ADR-0002 on this
 //! point for image inputs only; [`PageSizing::Native`] opts out of it.
 //!
-//! There is **no watermark yet**: the mark of
-//! `docs/adr/0002-watermark-algorithm-and-quality-modes.md` composites onto the
-//! [`Pixmap`] that [`PageSource::rasterise`] produces, between those last two
-//! stages, and lands separately so that this path stays reviewable on its own.
+//! The mark is [`mark`], specified by
+//! `docs/adr/0002-watermark-algorithm-and-quality-modes.md` and corrected in
+//! four respects by `docs/adr/0007-watermark-specification-corrections.md`. It
+//! is composited onto the [`Pixmap`] that [`PageSource::rasterise`] produces,
+//! between those stages and nowhere else, so the compositor cannot know what
+//! kind of document the pixels came from. Not yet here: PDF input
+//! ([ADR-0003]), the exclusion zone, `overlay` mode and the PNG encoder.
+//!
+//! [ADR-0003]: ../../../docs/adr/0003-pdf-input-rasterisation.md
 //!
 //! # The two dependencies
 //!
@@ -43,16 +48,21 @@ use core::fmt;
 
 pub mod exif;
 pub mod fingerprint;
+pub mod font;
+pub mod geom;
 pub mod image;
 pub mod jpeg;
+pub mod mark;
 pub mod page;
 pub mod pdf;
 pub mod pixmap;
+pub mod raster;
 
 #[cfg(test)]
 pub(crate) mod test_support;
 
 pub use image::{Image, ImagePage, decode as decode_image, sniff};
+pub use mark::{Mark, TileDensity};
 pub use page::{PageGeometry, PageSizing, PageSource, RasterError};
 pub use pixmap::Pixmap;
 
@@ -98,6 +108,22 @@ pub enum Error {
         /// Height that was asked for.
         height: u32,
     },
+    /// The mark text contains a character the bundled font cannot draw.
+    ///
+    /// Only the first one is carried, because every [`Error`] variant holds
+    /// `Copy` data only; [`mark::unsupported_characters`] lists them all.
+    UnsupportedCharacter {
+        /// The first character that has no glyph.
+        character: char,
+    },
+    /// The mark text will not fit the page at any permitted font size.
+    ///
+    /// Raised rather than clipping the text, because a truncated mark asserts
+    /// something different from the one the user wrote. See ADR-0007.
+    MarkDoesNotFit {
+        /// How many characters the mark text has.
+        characters: usize,
+    },
     /// A page was requested that the source does not have.
     PageOutOfRange {
         /// Index that was asked for.
@@ -126,6 +152,19 @@ impl fmt::Display for Error {
             Self::ImageTooLarge { width, height } => {
                 write!(f, "image is too large to process: {width}x{height}")
             }
+            Self::UnsupportedCharacter { character } => write!(
+                f,
+                "the mark text contains a character the bundled font cannot \
+                 draw: {character:?} (U+{:04X})",
+                u32::from(character)
+            ),
+            Self::MarkDoesNotFit { characters } => write!(
+                f,
+                "the mark text does not fit the page: {characters} characters \
+                 will not fit in {} lines even at the smallest font size; \
+                 shorten it",
+                mark::MAX_LINES
+            ),
             Self::PageOutOfRange { index, count } => {
                 write!(f, "no page {index}: this document has {count}")
             }
@@ -153,10 +192,13 @@ pub const MAX_DPI: f32 = 10_000.0;
 
 /// What the caller chooses about the output.
 ///
-/// These are the two knobs of ADR-0002's `standard` mode. The remaining
+/// The encoding knobs are ADR-0002's `standard` mode; the remaining
 /// modes — `compact`, `high`, `lossless` — are combinations of them plus a PNG
-/// encoder, and arrive with the watermark.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// encoder, and are not here yet.
+///
+/// Not `Copy`, because [`mark`] carries the mark text. Every field is cheap to
+/// clone and the struct is passed by reference everywhere.
+#[derive(Debug, Clone, PartialEq)]
 pub struct OutputOptions {
     /// JPEG quality, `1..=100`.
     pub quality: u8,
@@ -168,6 +210,28 @@ pub struct OutputOptions {
     /// rasterisation resolution and the page is the input's own `MediaBox`, so
     /// there is nothing here to bound.
     pub page_sizing: PageSizing,
+    /// The watermark to burn in, or `None` for the bare write path.
+    ///
+    /// `None` by default: the engine does not invent a mark, because ADR-0002's
+    /// closed open question decides that nothing is pre-filled. A mark naming
+    /// no recipient and no purpose is exactly the mark that fails to deter
+    /// reuse, so an empty one is not drawn at all.
+    pub mark: Option<mark::Mark>,
+    /// Seed for the mark's position jitter, or `None` to derive one.
+    ///
+    /// ADR-0002 Decision 6: derived from the document and the parameter set, so
+    /// two runs over the same input agree and two different inputs do not.
+    /// Setting it makes a run reproducible across documents, which is what the
+    /// golden tests use.
+    pub seed: Option<u64>,
+    /// Whether the mark's tiles are displaced at all.
+    ///
+    /// On by default. ADR-0002 Decision 3 keeps the jitter because two runs
+    /// over the same document then put the mark in different places, so an
+    /// attacker holding two watermarked copies cannot difference them to
+    /// recover the clean original. Turning it off is for reproducing a figure
+    /// or comparing two parameter sets, not for normal use.
+    pub jitter: bool,
 }
 
 impl Default for OutputOptions {
@@ -176,6 +240,9 @@ impl Default for OutputOptions {
             quality: DEFAULT_QUALITY,
             dpi: DEFAULT_DPI,
             page_sizing: PageSizing::CapToA4,
+            mark: None,
+            seed: None,
+            jitter: true,
         }
     }
 }
@@ -192,6 +259,9 @@ impl OutputOptions {
         }
         if !self.dpi.is_finite() || self.dpi <= 0.0 || self.dpi > MAX_DPI {
             return Err(Error::InvalidParameter { name: "dpi" });
+        }
+        if let Some(mark) = &self.mark {
+            mark.validate()?;
         }
         Ok(())
     }
@@ -213,12 +283,57 @@ pub fn render_to_pdf<S>(source: &S, options: &OutputOptions) -> Result<Vec<u8>>
 where
     S: PageSource + ?Sized,
 {
+    render_to_pdf_observed(source, options, |_, _| {})
+}
+
+/// [`render_to_pdf`], with a look at each page's pixels after the mark and
+/// before the encoder.
+///
+/// This is ADR-0002 Decision 6's **golden-hash hook**. Its test strategy asks
+/// for a "golden hash on the composited raster, before encoding", on the
+/// grounds that the raster is the layer the watermark algorithm owns and that
+/// determinism makes an exact comparison legitimate there — whereas a byte
+/// comparison of the finished PDF would break whenever the JPEG encoder
+/// changed, which tells you nothing about the watermark.
+///
+/// `observe` is handed the page index and the composited pixmap. It cannot
+/// change them: a hook that could would turn the pure function this crate
+/// promises into something else. A caller wanting the bytes themselves can
+/// clone inside the closure; the golden tests only fingerprint.
+///
+/// The same hook is what a live preview will use, which is the other reason it
+/// is a closure rather than a debug flag.
+///
+/// # Errors
+///
+/// As [`render_to_pdf`].
+pub fn render_to_pdf_observed<S, F>(
+    source: &S,
+    options: &OutputOptions,
+    mut observe: F,
+) -> Result<Vec<u8>>
+where
+    S: PageSource + ?Sized,
+    F: FnMut(usize, &Pixmap),
+{
     options.validate()?;
     let mut writer = pdf::PdfWriter::new();
     let mut pixmap = Pixmap::empty();
     for index in 0..source.page_count() {
         let geometry = source.page_geometry(index);
         source.rasterise(index, options.dpi, &mut pixmap)?;
+        // **The mark goes here**, between rasterising and encoding, and
+        // nowhere else. At this point the code cannot tell whether the pixels
+        // came from a JPEG, a PNG or a rasterised PDF page, which is how
+        // ADR-0002 Decision 1's "one compositor, operating on an RGBA pixmap"
+        // is made structural rather than a thing somebody has to maintain.
+        if let Some(mark) = &options.mark {
+            let seed = options
+                .seed
+                .unwrap_or_else(|| mark::derive_seed(&pixmap, mark));
+            mark::compose(&mut pixmap, mark, seed, options.jitter)?;
+        }
+        observe(index, &pixmap);
         // The density written into the JPEG is the one the page actually
         // prints at, not the one the caller asked for. Capping a page to A4
         // leaves the pixels alone and shrinks the sheet, so the two differ, and

@@ -2,7 +2,7 @@
 # Keep every target here; never put build logic only in a CI workflow.
 
 .DEFAULT_GOAL := help
-.PHONY: help fmt fmt-check lint test build wasm deps-check deps-update font-subset check clean
+.PHONY: help fmt fmt-check lint test build wasm deps-check deps-update font-subset nfc-table check clean
 
 WASM_TARGET := wasm32-unknown-unknown
 
@@ -41,6 +41,10 @@ font-subset: ## Rebuild the bundled font subset from an upstream Roboto-Regular.
 		exit 2; \
 	}
 	./scripts/subset-font.py "$(FONT)" crates/pochoir-core/assets/roboto/Roboto-Regular-subset.ttf
+
+nfc-table: ## Print the NFC composition table for crates/pochoir-core/src/mark/nfc.rs
+	@echo '# Paste between the markers in crates/pochoir-core/src/mark/nfc.rs.'
+	@./scripts/gen-nfc-table.py
 
 check: fmt-check lint test wasm deps-check ## Everything CI runs
 	@printf '\nAll checks passed.\n'

@@ -86,3 +86,4 @@ un-accept an ADR. We supersede it.
 | [0004](0004-build-reproducibility-and-deployed-bundle-attestation.md) | Build reproducibility and deployed-bundle attestation | Proposed |
 | [0005](0005-licensing.md) | Licensing | Accepted |
 | [0006](0006-image-page-size-cap.md) | Cap an image input's page at A4 | Accepted |
+| [0007](0007-watermark-specification-corrections.md) | Watermark specification corrections from implementation | Accepted |
