@@ -347,7 +347,8 @@ blunt alarm, and add a hard assertion that the dependency closure of
 in an explicit allowlist. That assertion, not the global count, is what keeps the
 common path lean once a 74-crate renderer is in the lock file. The scaffolding
 session owns `scripts/check-deps.sh`; this is a recommendation to it, not a
-change we make here.
+change we make here. *(It was accepted and implemented — see the open question
+below.)*
 
 ### Execution model: one single-threaded Web Worker, no wasm threads
 
@@ -553,20 +554,91 @@ Cloudflare can set COOP/COEP. MuPDF, unless the project goes AGPL.
 
 ## Open questions
 
-- [ ] **Needs decision from Samuel:** adopting `hayro` means accepting 74
-      transitive crates for the PDF path. That is a direct, deliberate
-      concession to the lean-dependency rule, made on the grounds that nobody
-      hand-rolls a PDF interpreter and that the cost is confined to a module the
-      common path never loads. **This is his call, not ours.** The alternative
-      is narrower: ship v1 with **image inputs only** and no PDF support at all,
-      keeping the whole project at a handful of dependencies, and add PDF input
-      later. Recommendation: adopt hayro behind the trait, because a
-      watermarking tool that cannot take a PDF cannot replace Filigrane Facile.
-- [ ] **Needs decision from Samuel:** whether `embed-fonts` / `embed-cmaps` stay
-      on (+519 KiB brotli). Recommendation: on, until a real-document corpus
-      says otherwise.
-- [ ] **Needs confirmation:** that the per-crate `deps-check` change is
-      acceptable to whoever owns `scripts/check-deps.sh`.
+**Every question in this section is closed.** They were answered on 2026-11-26,
+after this ADR was accepted, and are recorded here in place rather than in a new
+ADR, because none of the answers changes the decision this ADR records — see
+*Closing an open question* in [README.md](README.md).
+
+Each item names who decided it. The first two were raised as "needs decision
+from Samuel" and were in fact settled by the orchestrating session, under
+Samuel's standing rule that he is asked only for product direction, spending,
+legal and irreversible calls; they were reported to him before he approved this
+ADR. The wording of each question as it was originally raised is kept beneath
+its answer.
+
+- [x] **`hayro` is adopted. Decided by the orchestrator, as a deliberate and
+      reversible concession to the lean-dependency rule.**
+
+      Adopted **behind the `PageSource` trait**, in the lazily-loaded
+      `pochoir-wasm-pdf` artifact, so the common path never downloads it.
+      `pdfium-render` remains the **named fallback**, and the trigger to switch is
+      the one in the risk table: **systematic failures on a corpus of real French
+      administrative documents**, not a single bad render and not a preference.
+
+      The reason is the one in the recommendation, and it is a product reason
+      rather than a technical one: **a watermarker that cannot read a PDF cannot
+      replace Filigrane Facile.** The narrower alternative — image inputs only
+      for v1 — would have kept the whole project at a handful of crates and
+      shipped a tool that fails on the most common form of administrative
+      document in France.
+
+      What makes the concession tolerable is that it is **contained and
+      reversible**: 74 crates confined to a module most sessions never load, a
+      trait boundary that makes swapping the renderer a contained change rather
+      than a rewrite, `Apache-2.0 OR MIT` so we can fork it, and the per-crate
+      CI guard below to prove the containment holds rather than assume it.
+
+      *As raised:* adopting `hayro` means accepting 74 transitive crates for the
+      PDF path. That is a direct, deliberate concession to the lean-dependency
+      rule, made on the grounds that nobody hand-rolls a PDF interpreter and that
+      the cost is confined to a module the common path never loads. **This is his
+      call, not ours.** The alternative is narrower: ship v1 with **image inputs
+      only** and no PDF support at all, keeping the whole project at a handful of
+      dependencies, and add PDF input later. Recommendation: adopt hayro behind
+      the trait, because a watermarking tool that cannot take a PDF cannot
+      replace Filigrane Facile.
+- [x] **`embed-fonts` and `embed-cmaps` stay on. Decided by the orchestrator.**
+
+      They cost **+519 KiB brotli, about 39% of that module**, and they stay
+      until a real-document corpus shows they can go. The trade is not close:
+      **a PDF that renders with the wrong glyphs is a worse failure than a larger
+      lazily-loaded module.** The module is downloaded only by sessions that
+      actually drop a PDF, so the bytes are paid by the users who need the
+      correctness.
+
+      The trigger to revisit is evidence, not budget: a corpus of real French
+      administrative PDFs rendering correctly without them.
+
+      *As raised:* whether `embed-fonts` / `embed-cmaps` stay on (+519 KiB
+      brotli). Recommendation: on, until a real-document corpus says otherwise.
+- [x] **Per-crate `deps-check` — confirmed, and already delivered.**
+
+      Shipped in [PR #1](https://github.com/SamuelBagattin/pochoir/pull/1),
+      merged as `e5a692f`, and live and green on `main`. The recommendation above
+      was accepted in full and implemented as:
+
+      - the global `[[package]]` count kept as a blunt alarm, and now the only
+        check that sees dev- and build-dependencies;
+      - a per-crate assertion that each guarded crate's third-party closure
+        matches an allowlist under `scripts/allowlist/`, **measured per crate with
+        its own target** — `pochoir-core` for `wasm32-unknown-unknown`,
+        `pochoir-cli` for the host, since the CLI is never built for wasm32;
+      - `--edges normal`, so the per-crate check covers runtime dependencies and
+        the global count catches build-time ones;
+      - exact-set equality, so a *stale* allowlist fails too, with its own
+        message;
+      - a `--update` mode, so an allowlist is only ever regenerated by
+        measurement and never hand-copied.
+
+      The containment property this ADR relies on is therefore enforced rather
+      than asserted. For the record, with the measured figures: the common path
+      is **11 unique crates / 14 `[[package]]` entries**, the full adopted set
+      including `hayro` is **74 / 81**, and **adding `zune-jpeg` and `png` to
+      `hayro` adds zero crates**, because `hayro` depends on `image`, which
+      already pulls both.
+
+      *As raised:* **needs confirmation** that the per-crate `deps-check` change
+      is acceptable to whoever owns `scripts/check-deps.sh`.
 
 ## Could not verify
 
