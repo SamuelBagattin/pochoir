@@ -7,6 +7,8 @@
  * invented at the keyboard; if you want to change one, change the ADR.
  */
 
+import { EngineError } from './module';
+
 export type QualityMode = 'compact' | 'standard' | 'high' | 'lossless';
 export type PageSizing = 'a4-max' | 'native';
 export type TileDensity = 'low' | 'normal' | 'high';
@@ -64,6 +66,13 @@ export const LIMITS = {
   textMaxLines: 3,
 } as const;
 
+/**
+ * The engine's `OutputOptions::MAX_DPI`. DPI is an `f32` there and a `u32` on
+ * the wire, which is fine — a user interface has no fractional DPI to offer —
+ * but the conversion has to be deliberate rather than a cast.
+ */
+export const MAX_DPI = 10_000;
+
 /** 50 MB. A phone photo is 3-8 MB; this is generous and still bounded. */
 export const MAX_INPUT_BYTES = 50 * 1024 * 1024;
 
@@ -101,12 +110,25 @@ export const OPTIONS_VERSION = 1;
 export const OPTIONS_BYTES = 48;
 
 export function packOptions(o: MarkOptions): Uint8Array {
+  // `>>> 0` on a bad value does two things quietly, and both are worse than
+  // refusing: it truncates a fractional DPI, and it wraps a negative or
+  // out-of-range one into a plausible-looking large number that would surface
+  // months later as a mysteriously enormous page rather than as an error.
+  // Nothing in the interface can reach this today — which is exactly why it
+  // is cheap to make it a refusal now.
+  if (!Number.isInteger(o.dpi) || o.dpi <= 0 || o.dpi > MAX_DPI) {
+    throw new EngineError(
+      'argument',
+      `dpi must be a whole number in 1..=${MAX_DPI}, got ${o.dpi}`,
+    );
+  }
+
   const buf = new ArrayBuffer(OPTIONS_BYTES);
   const v = new DataView(buf);
   v.setUint32(0, OPTIONS_VERSION, true);
   v.setUint32(4, MODE_CODES[o.mode], true);
   v.setUint32(8, SIZING_CODES[o.pageSizing], true);
-  v.setUint32(12, o.dpi >>> 0, true);
+  v.setUint32(12, o.dpi, true);
   v.setFloat32(16, o.fontSizePct, true);
   v.setFloat32(20, o.angleDeg, true);
   v.setFloat32(24, o.opacity, true);
