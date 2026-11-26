@@ -382,7 +382,7 @@ runs closures sequentially and may never execute `spawn`ed work *(second-hand)*,
 so any crate offering it must be taken with `default-features = false`. For
 `hayro` this is already the case — its manifest sets `default-features = false`
 on its dependencies, and our wasm32 build pulled no `rayon` into the lock file at
-all (verified: `rayon` is absent from the 99-package lock).
+all (verified: `rayon` is absent from the adopted set's 81-package lock).
 
 Two practical deployment notes that follow from the above, both verified from a
 deployed comparable (`filigrane-local`, which runs on Cloudflare Pages):
