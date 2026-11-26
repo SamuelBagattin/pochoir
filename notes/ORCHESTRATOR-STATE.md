@@ -72,7 +72,7 @@ large scanned PDFs are a WASM memory risk; SEO against a gouv.fr domain is hard;
 | name | id | owns | state |
 |---|---|---|---|
 | `scaffold` | `local_ae46d0e2-325d-4ddb-82b6-544820645fe1` | build skeleton | **merged into `main` as `ea30fcd`** |
-| `adr-design` | `local_b703f80a-cb41-408f-9087-ec847b630de1` | `docs/adr/` only — design-only, must not write code | running |
+| `adr-design` | `local_b703f80a-cb41-408f-9087-ec847b630de1` | `docs/adr/` only — design-only | **merged into `main` as `1a8303b`**; idle, told to stand down. Keep it rather than archive it: it holds the design context if Samuel asks for ADR changes |
 
 File ownership is disjoint by design: `scaffold` must not touch `docs/`, `adr-design` must not
 touch anything outside `docs/adr/`.
@@ -101,10 +101,19 @@ names the ADR requirement.
 
 ## Reserved numbers
 
-- ADR-0001 stack and dependency policy — `adr-design`
-- ADR-0002 watermark algorithm and output quality modes — `adr-design`
-- ADR-0003 PDF input rasterisation — `adr-design`
-- ADR-0004 and up: unassigned.
+- ADR-0001 stack and dependency policy — `adr-design`, merged, `Proposed`
+- ADR-0002 watermark algorithm and output quality modes — `adr-design`, merged, `Proposed`
+- ADR-0003 PDF input rasterisation — `adr-design`, merged, `Proposed`
+- **ADR-0004 build reproducibility and deployed-bundle attestation — reserved, not yet briefed.**
+  `adr-design` made the point that forced this, and it is the sharpest thing it said: publishing
+  source proves nothing about what the user executes, because they run whatever the CDN served,
+  and for a web-delivered tool those bytes can change silently on any deploy. A public repo
+  therefore does not satisfy the audit claim, it only sharpens three requirements — no obfuscated
+  or unmappable build (reconstructible from the repo with one documented command, source maps
+  shipped), reproducible builds with a published hash of the deployed bundle, and the strict CSP as
+  checkable evidence. ADR-0002's determinism work earns its keep twice here: it is also what makes
+  an independent rebuild comparable at all. Promoted from "someday" to near-term.
+- ADR-0005 and up: unassigned.
 
 ## Merge queue
 
