@@ -17,6 +17,32 @@ own git worktree.
 4. `mcp__ccd_session_mgmt__get_usage` for each live session **and for yourself** — this was
    neglected once already and Samuel had to ask.
 5. Skim `docs/adr/` README for status; several ADRs are `Accepted` and binding.
+6. Read **Next up** immediately below — that is the queue; the rest of this file is why.
+
+### Next up — the queue, in order (keep this block current)
+
+The one section to read if you are compacted mid-flight. Everything below is detail.
+
+1. **Docs + refusal-path fix** — in flight with `phase2-mark`. Four items: the warning when the
+   mark shrinks below a fraction of the request (because `MarkDoesNotFit` is unreachable and
+   ADR-0007 describes behaviour the code lacks), "no signing key" into ADR-0004 open question 2,
+   0006 and 0007 added to `CLAUDE.md`'s binding list, the Apache-2.0 font line in `LICENSE.md`.
+2. **Web UI** — in flight with `web-ui`. `web/` only. `web/DESIGN.md` before any CSS; built
+   against the stubbed ABI. Review it against ADR-0001's "None" rows (no state library, no CSS
+   framework, no icon set, no file-drop crate), no CDN, no analytics, and verify the RGAA claims
+   rather than reading them.
+3. **wasm bindings** — not briefed. Blocking the MVP. Two traps that do not announce themselves:
+   the crate **must be a workspace member** or reproducibility breaks silently, and
+   `#![forbid(unsafe_code)]` vs `#[no_mangle]` under edition 2024 has to be resolved
+   (`make wasm` emits a 43-byte empty module today). The ABI is fixed and recorded below.
+4. **Deploy plumbing** — last, and not from inertia: it writes into `web/` and has nothing to
+   test against before the UI exists.
+
+Then: **tell Samuel the moment the MVP is genuinely usable**, because that is his trigger to
+register `pochoir.app`, which is verified-available but unreserved.
+
+**Rotation due:** `phase2-mark` is at 441k/1M (2026-11-26). Over the 300k rule. It is mid-task,
+so it finishes the docs fix, then rotates — it must not be briefed with anything further.
 
 ### The review bar, which is the job
 
