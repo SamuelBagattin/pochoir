@@ -5,8 +5,15 @@
 # can be repointed at new code by whoever owns the action; a SHA cannot.
 name: CI
 
+# `push` is filtered to `main` on purpose. Without the filter, a branch that
+# has a pull request open runs this job twice for the same commit — once for
+# `push` and once for `pull_request` — and the concurrency group does not
+# collapse them, because `github.ref` differs between the two events
+# (`refs/heads/<branch>` versus `refs/pull/<n>/merge`). One job, one run per
+# change: branches are covered by `pull_request`, and `main` by `push`.
 on:
   push:
+    branches: [main]
   pull_request:
 
 permissions:

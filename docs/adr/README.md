@@ -79,3 +79,7 @@ un-accept an ADR. We supersede it.
 | [0001](0001-stack-and-dependency-policy.md) | Stack and dependency policy | Accepted |
 | [0002](0002-watermark-algorithm-and-quality-modes.md) | Watermark algorithm and output quality modes | Accepted |
 | [0003](0003-pdf-input-rasterisation.md) | PDF input rasterisation | Accepted |
+| [0005](0005-licensing.md) | Licensing | Accepted |
+
+`0004` is reserved for build reproducibility and deployed-bundle attestation
+and is not written yet. A number is never reused, so the gap stays.
