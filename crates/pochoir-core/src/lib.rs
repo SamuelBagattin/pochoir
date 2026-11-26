@@ -5,17 +5,58 @@
 //! reused. That rules out `std::fs`, `std::time`, threads and sockets here:
 //! I/O belongs to the callers (`pochoir-cli`, the wasm bindings).
 //!
-//! This crate has zero third-party dependencies. Keep it that way.
+//! # What is here today
+//!
+//! The **write path**: an image goes in, a PDF comes out.
+//!
+//! ```text
+//! bytes -> image::decode -> ImagePage (a PageSource) -> jpeg::encode -> pdf::PdfWriter
+//!            |                  |                          |                |
+//!         zune-jpeg / png    EXIF orientation,          ours, baseline    ours, /DCTDecode
+//!         (the only two       no resampling             4:4:4             verbatim
+//!          dependencies)
+//! ```
+//!
+//! There is **no watermark yet**: the mark of
+//! `docs/adr/0002-watermark-algorithm-and-quality-modes.md` composites onto the
+//! [`Pixmap`] that [`PageSource::rasterise`] produces, between those last two
+//! stages, and lands separately so that this path stays reviewable on its own.
+//!
+//! # The two dependencies
+//!
+//! `zune-jpeg` and `png`, for decode only, justified in
+//! `docs/adr/0001-stack-and-dependency-policy.md`: they parse hostile input,
+//! which is the single case its rule — *hand-roll everything that writes;
+//! depend deliberately only for parsers of hostile input* — says to depend for.
+//! The JPEG encoder, the PDF writer, the EXIF read and the content fingerprint
+//! are all ours.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
 use core::fmt;
 
+pub mod exif;
+pub mod fingerprint;
+pub mod image;
+pub mod jpeg;
+pub mod page;
+pub mod pdf;
+pub mod pixmap;
+
+#[cfg(test)]
+pub(crate) mod test_support;
+
+pub use image::{Image, ImagePage, decode as decode_image, sniff};
+pub use page::{PageGeometry, PageSource, RasterError};
+pub use pixmap::Pixmap;
+
 /// Anything that can go wrong inside the core engine.
 ///
 /// Hand-rolled on purpose: no `thiserror`, no `anyhow`. The variants carry only
-/// `Copy` data so the type stays cheap to pass across the wasm boundary.
+/// `Copy` data so the type stays cheap to pass across the wasm boundary, which
+/// is also why a decoder's own formatted message is reduced to a `&'static str`
+/// reason rather than kept.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Error {
@@ -31,6 +72,34 @@ pub enum Error {
         /// Name of the offending parameter.
         name: &'static str,
     },
+    /// A decoder refused the input.
+    Decode {
+        /// The format we believed we were reading, e.g. `JPEG`.
+        format: &'static str,
+        /// Why the decoder gave up, in a few words.
+        reason: &'static str,
+    },
+    /// An internal buffer was not the size the operation needed.
+    BufferSize {
+        /// Bytes the operation required.
+        expected: usize,
+        /// Bytes it was given.
+        got: usize,
+    },
+    /// The image exceeds what this build will allocate for.
+    ImageTooLarge {
+        /// Width that was asked for.
+        width: u32,
+        /// Height that was asked for.
+        height: u32,
+    },
+    /// A page was requested that the source does not have.
+    PageOutOfRange {
+        /// Index that was asked for.
+        index: usize,
+        /// Number of pages the source has.
+        count: usize,
+    },
 }
 
 impl fmt::Display for Error {
@@ -43,6 +112,18 @@ impl fmt::Display for Error {
             Self::InvalidParameter { name } => {
                 write!(f, "invalid value for parameter `{name}`")
             }
+            Self::Decode { format, reason } => {
+                write!(f, "could not decode this {format}: {reason}")
+            }
+            Self::BufferSize { expected, got } => {
+                write!(f, "expected a buffer of {expected} bytes, got {got}")
+            }
+            Self::ImageTooLarge { width, height } => {
+                write!(f, "image is too large to process: {width}x{height}")
+            }
+            Self::PageOutOfRange { index, count } => {
+                write!(f, "no page {index}: this document has {count}")
+            }
         }
     }
 }
@@ -52,10 +133,111 @@ impl core::error::Error for Error {}
 /// Shorthand for a result carrying this crate's [`Error`].
 pub type Result<T> = core::result::Result<T, Error>;
 
+/// JPEG quality of ADR-0002's default `standard` mode.
+pub const DEFAULT_QUALITY: u8 = 85;
+
+/// Resolution of ADR-0002's default `standard` mode, in dots per inch.
+///
+/// For a bitmap input this only decides what physical page size the pixels
+/// represent — the pixels themselves are never resampled. It is the
+/// rasterisation resolution that will matter for PDF inputs.
+pub const DEFAULT_DPI: f32 = 200.0;
+
+/// Highest resolution we accept, as a sanity bound rather than a real limit.
+pub const MAX_DPI: f32 = 10_000.0;
+
+/// What the caller chooses about the output.
+///
+/// These are the two knobs of ADR-0002's `standard` mode. The remaining
+/// modes — `compact`, `high`, `lossless` — are combinations of them plus a PNG
+/// encoder, and arrive with the watermark.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OutputOptions {
+    /// JPEG quality, `1..=100`.
+    pub quality: u8,
+    /// Output resolution in dots per inch.
+    pub dpi: f32,
+}
+
+impl Default for OutputOptions {
+    fn default() -> Self {
+        Self {
+            quality: DEFAULT_QUALITY,
+            dpi: DEFAULT_DPI,
+        }
+    }
+}
+
+impl OutputOptions {
+    /// Check both values before any work is done.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidParameter`] naming the first offending field.
+    pub fn validate(&self) -> Result<()> {
+        if !(1..=100).contains(&self.quality) {
+            return Err(Error::InvalidParameter { name: "quality" });
+        }
+        if !self.dpi.is_finite() || self.dpi <= 0.0 || self.dpi > MAX_DPI {
+            return Err(Error::InvalidParameter { name: "dpi" });
+        }
+        Ok(())
+    }
+}
+
+/// Render every page of a [`PageSource`] into one PDF.
+///
+/// One pixmap is allocated and reused for every page, which is the memory model
+/// `docs/adr/0003-pdf-input-rasterisation.md` requires: rasterise into one
+/// buffer, encode, append the encoded page to the output, move on. Peak live
+/// memory is one page's pixels plus the output, not the whole document's.
+///
+/// # Errors
+///
+/// Returns whatever the source, the encoder or the writer rejected; in
+/// particular [`Error::InvalidParameter`] for bad options and
+/// [`Error::UnsupportedFormat`] for a source with no pages.
+pub fn render_to_pdf<S>(source: &S, options: &OutputOptions) -> Result<Vec<u8>>
+where
+    S: PageSource + ?Sized,
+{
+    options.validate()?;
+    let mut writer = pdf::PdfWriter::new();
+    let mut pixmap = Pixmap::empty();
+    for index in 0..source.page_count() {
+        let geometry = source.page_geometry(index);
+        source.rasterise(index, options.dpi, &mut pixmap)?;
+        let encoded = jpeg::encode(&pixmap, options.quality, options.dpi)?;
+        writer.add_jpeg_page(geometry, &encoded)?;
+    }
+    writer.finish()
+}
+
+/// Decode a JPEG or PNG and write it out as a one-page PDF.
+///
+/// The whole write path, end to end. Output is a pure function of
+/// `(bytes, options)`: no clock is read, no random number is drawn, and the
+/// input's metadata is dropped structurally because the pixels are re-encoded.
+///
+/// # Errors
+///
+/// Returns [`Error::UnsupportedFormat`] for input that is neither a JPEG nor a
+/// PNG, [`Error::Decode`] if the decoder refused it, and
+/// [`Error::InvalidParameter`] for bad options.
+pub fn image_to_pdf(bytes: &[u8], options: &OutputOptions) -> Result<Vec<u8>> {
+    options.validate()?;
+    let image = image::decode(bytes)?;
+    let page = ImagePage::new(image, options.dpi)?;
+    render_to_pdf(&page, options)
+}
+
 /// Version of the core engine, as declared in its `Cargo.toml`.
 ///
-/// The CLI and the wasm bindings both report this so that a user can tell
-/// exactly which engine produced a given output file.
+/// Reported by the CLI and the wasm bindings so a user can tell which engine
+/// they are running. It is deliberately **not** written into any output file:
+/// ADR-0002 keeps `/Producer` a constant with no version number, because a
+/// version string tells a recipient which build made the file and therefore
+/// which known bugs it has.
 ///
 /// ```
 /// let v = pochoir_core::version();
@@ -68,7 +250,9 @@ pub fn version() -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{Error, version};
+    use super::{
+        DEFAULT_DPI, DEFAULT_QUALITY, Error, OutputOptions, image_to_pdf, test_support, version,
+    };
 
     #[test]
     fn version_is_a_semver_triple() {
@@ -96,11 +280,106 @@ mod tests {
             Error::InvalidParameter { name: "opacity" }.to_string(),
             "invalid value for parameter `opacity`"
         );
+        assert_eq!(
+            Error::Decode {
+                format: "JPEG",
+                reason: "truncated"
+            }
+            .to_string(),
+            "could not decode this JPEG: truncated"
+        );
+        assert_eq!(
+            Error::ImageTooLarge {
+                width: 9,
+                height: 8
+            }
+            .to_string(),
+            "image is too large to process: 9x8"
+        );
+        assert_eq!(
+            Error::PageOutOfRange { index: 3, count: 1 }.to_string(),
+            "no page 3: this document has 1"
+        );
+        assert_eq!(
+            Error::BufferSize {
+                expected: 4,
+                got: 3
+            }
+            .to_string(),
+            "expected a buffer of 4 bytes, got 3"
+        );
     }
 
     #[test]
     fn error_is_a_std_error() {
         fn takes_std_error(_: &dyn core::error::Error) {}
         takes_std_error(&Error::UnsupportedFormat);
+    }
+
+    #[test]
+    fn the_defaults_are_adr_0002s_standard_mode() {
+        let options = OutputOptions::default();
+        assert_eq!(options.quality, 85);
+        assert_eq!(options.dpi, 200.0);
+        assert_eq!(DEFAULT_QUALITY, 85);
+        assert_eq!(DEFAULT_DPI, 200.0);
+        options.validate().expect("the defaults must be valid");
+    }
+
+    #[test]
+    fn options_are_validated() {
+        for quality in [0u8, 101, 255] {
+            let options = OutputOptions {
+                quality,
+                ..Default::default()
+            };
+            assert_eq!(
+                options.validate(),
+                Err(Error::InvalidParameter { name: "quality" })
+            );
+        }
+        for dpi in [0.0f32, -1.0, f32::NAN, f32::INFINITY, 10_001.0] {
+            let options = OutputOptions {
+                dpi,
+                ..Default::default()
+            };
+            assert_eq!(
+                options.validate(),
+                Err(Error::InvalidParameter { name: "dpi" })
+            );
+        }
+    }
+
+    #[test]
+    fn the_write_path_runs_end_to_end() {
+        let jpeg = test_support::jpeg_of(test_support::gradient(40, 60));
+        let pdf = image_to_pdf(&jpeg, &OutputOptions::default()).expect("renders");
+        assert!(pdf.starts_with(b"%PDF-"));
+        assert!(pdf.ends_with(b"%%EOF\n"));
+        let text = String::from_utf8_lossy(&pdf);
+        assert!(text.contains("/Filter /DCTDecode"));
+        assert!(text.contains("/Count 1"));
+    }
+
+    #[test]
+    fn the_write_path_is_byte_identical_across_runs() {
+        let jpeg = test_support::jpeg_of(test_support::gradient(40, 60));
+        let options = OutputOptions::default();
+        assert_eq!(
+            image_to_pdf(&jpeg, &options).expect("renders"),
+            image_to_pdf(&jpeg, &options).expect("renders")
+        );
+    }
+
+    #[test]
+    fn bad_options_are_refused_before_any_decoding() {
+        let options = OutputOptions {
+            quality: 0,
+            dpi: 200.0,
+        };
+        assert_eq!(
+            image_to_pdf(b"not an image", &options),
+            Err(Error::InvalidParameter { name: "quality" })
+        );
     }
 }
