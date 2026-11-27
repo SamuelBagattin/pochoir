@@ -7,7 +7,7 @@
 //! silently moved into range produces a document that does not say what the user
 //! asked it to say.
 
-use pochoir_core::mark::{Mark, TileDensity};
+use pochoir_core::mark::{Mark, MarkColour, TileDensity};
 use pochoir_core::{MAX_DPI, OutputOptions, PageSizing};
 
 use crate::status::{Failure, Status};
@@ -179,12 +179,16 @@ pub fn parse(raw: &[u8], text: &str) -> Result<Request, Failure> {
         _ => return Err(bad(FIELD_DENSITY)),
     };
 
+    // This ABI has carried an explicit colour since it was written, so every
+    // request through it is `MarkColour::Fixed` and never the automatic choice
+    // ADR-0010 makes the engine's default. Wiring the browser onto that choice
+    // means a wire change, which belongs with the control that exposes it.
     let packed_colour = u32_at(raw, 36).ok_or_else(|| bad(FIELD_LENGTH))?;
-    let colour = [
+    let colour = MarkColour::Fixed([
         ((packed_colour >> 16) & 0xFF) as u8,
         ((packed_colour >> 8) & 0xFF) as u8,
         (packed_colour & 0xFF) as u8,
-    ];
+    ]);
 
     // Zero means "derive one from the document", which is ADR-0002 Decision 6's
     // behaviour and the engine's own default. Reading it as a literal seed would
@@ -261,8 +265,8 @@ mod tests {
     use crate::status::Status;
     use pochoir_core::PageSizing;
     use pochoir_core::mark::{
-        DEFAULT_ANGLE_DEGREES, DEFAULT_BLUR_RATIO, DEFAULT_COLOUR, DEFAULT_FONT_SIZE_RATIO,
-        DEFAULT_OPACITY, MAX_BLUR_RATIO, TileDensity,
+        DARK_COLOUR, DEFAULT_ANGLE_DEGREES, DEFAULT_BLUR_RATIO, DEFAULT_FONT_SIZE_RATIO,
+        DEFAULT_OPACITY, MAX_BLUR_RATIO, MarkColour, TileDensity,
     };
 
     /// The browser client's `DEFAULT_OPTIONS`, packed. Written out field by
@@ -305,7 +309,7 @@ mod tests {
         assert_eq!(mark.angle_degrees, DEFAULT_ANGLE_DEGREES);
         assert_eq!(mark.opacity, DEFAULT_OPACITY);
         assert_eq!(mark.blur_ratio, DEFAULT_BLUR_RATIO);
-        assert_eq!(mark.colour, DEFAULT_COLOUR);
+        assert_eq!(mark.colour, MarkColour::Fixed(DARK_COLOUR));
         assert_eq!(mark.density, TileDensity::Normal);
     }
 
@@ -470,7 +474,10 @@ mod tests {
     #[test]
     fn the_colour_ignores_the_top_byte() {
         let request = parse(&with(36, &0xFF12_3456_u32.to_le_bytes()), "X").expect("parses");
-        assert_eq!(request.mark().expect("mark").colour, [0x12, 0x34, 0x56]);
+        assert_eq!(
+            request.mark().expect("mark").colour,
+            MarkColour::Fixed([0x12, 0x34, 0x56])
+        );
     }
 
     #[test]
