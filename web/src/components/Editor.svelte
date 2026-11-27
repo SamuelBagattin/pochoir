@@ -52,14 +52,23 @@
   const canExport = $derived(Boolean(file) && bitmap !== null && !exporting);
 
   const statusLabel = $derived(
-    problem
+    problem || markProblem
       ? t.preview.statusFailed
       : busy
         ? t.preview.statusRendering
         : bitmap
           ? t.preview.statusReady
-          : t.preview.statusIdle,
+          : file
+            ? t.preview.statusAwaitingMark
+            : t.preview.statusIdle,
   );
+
+  /**
+   * What the stage says when there is no bitmap. Two different reasons to
+   * have none, and they want different sentences: no document at all, or a
+   * document with nothing to draw on it yet.
+   */
+  const stageEmptyMessage = $derived(file ? t.preview.awaitingMark : t.preview.empty);
 
   $effect(() => () => client.dispose());
 
@@ -107,6 +116,24 @@
    */
   function requestRender(): void {
     if (!file) return;
+
+    // Never ask the engine for something it has already decided is invalid.
+    // `Mark::prepared()` refuses an empty or whitespace-only mark with
+    // BadArgument, so rendering here would report our own defect to somebody
+    // who has done nothing wrong — and it would do it on every single load,
+    // because a document is always chosen before any text is typed. An image
+    // with no mark yet is a perfectly good state; it is just not a preview.
+    if (mark.isBlank) {
+      generation += 1; // discard anything already in flight
+      restartWanted = false;
+      bitmap = null;
+      problem = null;
+      markProblem = null;
+      busy = false;
+      announcement = '';
+      return;
+    }
+
     if (inFlight) {
       restartWanted = true;
       return;
@@ -134,9 +161,11 @@
       inFlight = false;
       if (restartWanted && file) {
         // Straight into the next one, without dropping `busy` in between:
-        // the status line should not flicker to 'à jour' mid-drag.
+        // the status line should not flicker to 'à jour' mid-drag. Through
+        // `requestRender` rather than `render`, so that text deleted while a
+        // render was running is caught by the blank guard above.
         restartWanted = false;
-        void render();
+        void requestRender();
       } else if (mine === generation) {
         busy = false;
       }
@@ -432,6 +461,7 @@
       {busy}
       {statusLabel}
       {announcement}
+      emptyMessage={stageEmptyMessage}
       fileName={file?.name ?? null}
     />
   </div>

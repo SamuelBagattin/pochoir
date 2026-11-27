@@ -178,13 +178,29 @@ export function relativeLuminance(hex: string): number {
 /** Above this the mark is too light to survive greyscale reproduction. */
 export const LUMINANCE_WARN_ABOVE = 0.35;
 
-/** Clamp and trim the mark text to what the engine will accept. */
-export function normaliseMarkText(raw: string): { text: string; truncatedLines: boolean } {
+/**
+ * Clamp and trim the mark text to what the engine will accept.
+ *
+ * `isBlank` is a precondition, not a cosmetic test: `Mark::prepared()` refuses
+ * an empty or whitespace-only mark with `BadArgument`, so a caller that sends
+ * one is asking the engine for something it has already decided is invalid.
+ * It lives here, beside the other rules about mark text, so there is one
+ * answer rather than a `.trim()` in whichever component remembered.
+ */
+export function normaliseMarkText(raw: string): {
+  text: string;
+  truncatedLines: boolean;
+  isBlank: boolean;
+} {
   // NFC, because ADR-0002 requires it: macOS filenames and clipboard paste
   // arrive decomposed and the glyph rasteriser does no mark positioning.
   const nfc = raw.normalize('NFC');
   const lines = nfc.split(/\r\n|\r|\n/);
   const kept = lines.slice(0, LIMITS.textMaxLines);
   const text = kept.join('\n').slice(0, LIMITS.textMaxChars);
-  return { text, truncatedLines: lines.length > LIMITS.textMaxLines };
+  return {
+    text,
+    truncatedLines: lines.length > LIMITS.textMaxLines,
+    isBlank: text.trim().length === 0,
+  };
 }
