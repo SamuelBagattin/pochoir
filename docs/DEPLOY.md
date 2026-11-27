@@ -1,5 +1,12 @@
 # Deploying Pochoir
 
+> **Superseded in part, 2026-11-27.** The site is live at
+> <https://pochoir.sam-bagattin.workers.dev>. The paragraph below described the
+> state before that and is kept because most of this document — the steps, the
+> order, the list of what a domain still needs — is unchanged. Where a line
+> says something is unverified for want of an account, check the *What could
+> not be verified* section first: several of those questions are now answered.
+
 **Nothing is deployed. There is no Cloudflare account, no zone, no domain, and
 no credential anywhere in this repository.** `pochoir.app` is not registered.
 This document exists so that the first deploy is a reviewed command rather than
@@ -92,10 +99,28 @@ Stated as unknowns rather than guessed at.
 - **Whether `! Header-Name` detaches as documented.** The local server
   implements the documented behaviour and the rules resolve correctly there.
   Unverified against the platform.
-- **Whether `Integrity-Policy`, `Cross-Origin-Opener-Policy` and
-  `Content-Type` survive `_headers` at all.** ADR-0004 records the COOP/COEP
-  question as open, and no Cloudflare page mentions either header. One
-  `curl -I` against the first preview settles all of it.
+- ~~**Whether `Integrity-Policy`, `Cross-Origin-Opener-Policy` and
+  `Content-Type` survive `_headers` at all.**~~ **Answered 2026-11-27: they
+  do.** `curl -I` against the live origin returns `integrity-policy`,
+  `cross-origin-opener-policy`, `referrer-policy`, `x-content-type-options` and
+  the Content-Security-Policy intact on one line. The comments parse as
+  written and nothing is mangled.
+
+  This was the good news and it came with bad. The enforcing form,
+  `Integrity-Policy: blocked-destinations=(script)`, arrived at the browser and
+  was obeyed — and **made the site a blank page in Safari**, because WebKit
+  does not accept a `modulepreload` link's `integrity` as metadata for the
+  import it covers, so every code-split chunk is refused. The header now ships
+  as `Integrity-Policy-Report-Only`. The measurements are in
+  [ADR-0009](adr/0009-deploy-plumbing-and-web-attestation.md) Decision 5 and the
+  consequence for what we can claim is in
+  [ADR-0004](adr/0004-build-reproducibility-and-deployed-bundle-attestation.md),
+  the ceiling, point 4.
+
+  **The lesson for item 7 of the list above is sharper than it was written.**
+  "A first deploy checked in all three engines" was on that list and was not
+  done; this is exactly the failure it was there to catch, and it was found by
+  a human loading the site rather than by anything in the pipeline.
 - **Whether `/_pochoir/engine/*` matches as expected.** Only the trailing
   splat is documented, which is why the engine has its own directory instead of
   a `*.wasm` pattern.

@@ -33,16 +33,57 @@
 # evidence about intent rather than a seal on the origin: CSP has no shipped
 # directive restricting top-level navigation.
 #
-# `Integrity-Policy: blocked-destinations=(script)` makes integrity metadata
-# MANDATORY for script requests, which closes the hole where an attacker who
-# can rewrite the HTML simply deletes the `integrity` attributes. It is only
-# shippable because `make web-build` runs `scripts/web-attest.py`, which emits
-# a `modulepreload` link carrying a hash for every chunk the entry script
-# imports. MEASURED: with the header and without those links, the chunk request
-# is blocked outright and the application is blank. With them, the page mounts
-# and a tampered chunk is refused. Deploying a `dist/` that has not been
-# attested therefore ships a blank page — which is why `make web-deploy-check`
-# runs the verifier before anything is uploaded.
+# `Integrity-Policy` makes integrity metadata MANDATORY for script requests,
+# which closes the hole where an attacker who can rewrite the HTML simply
+# deletes the `integrity` attributes. It is sent **report-only**, and that is a
+# retreat forced by a measurement, not a preference. ADR-0004 Decision 2 chose
+# the enforcing form; ADR-0004's ceiling and ADR-0009 Decision 5 now record why
+# we cannot have it.
+#
+# MEASURED, 2026-11-27, on this exact build served by `make web-serve`, in
+# Mobile Safari on iOS 26.5 and corroborated against the live origin in Safari
+# 27.2 on macOS:
+#
+#   enforcing, attested build  entry script loads; the chunk it imports is
+#                              NEVER REQUESTED; the island never mounts and the
+#                              middle of the page is empty
+#   header removed             chunk fetched, island mounts
+#   report-only                chunk fetched, island mounts
+#   enforcing, entry `integrity` attribute deleted
+#                              entry script refused as well
+#
+# That last row is the one that tells us what WebKit is actually doing. It
+# enforces the policy correctly for a script the HTML names, and it honours an
+# `integrity` attribute on that script. What it does not do is credit a
+# `<link rel="modulepreload" integrity=…>` to the module import it covers — and
+# a static `import` has no attribute of its own to carry a hash. So every
+# code-split chunk is, to WebKit, a script arriving with no integrity metadata,
+# and the policy refuses it. Chromium credits the preload and runs the page.
+# WebKit bug 326340.
+#
+# Firefox 160.0.1, measured the same way: the enforcing header does not block
+# anything there either, and a tampered chunk also runs. Gecko neither enforces
+# `blocked-destinations=(script)` nor checks a `modulepreload` link's hash. So
+# the enforcing form was only ever doing work in Chromium.
+#
+# Enforcing this header therefore costs us every Safari user — on a French site
+# about photographing identity documents, most of the mobile audience — to gain
+# a defence in depth that only Chromium applies. Report-only keeps the
+# declaration in the response and the console warning in engines that implement
+# it, and blocks nothing. It does NOT send reports anywhere: that would need a
+# `Reporting-Endpoints` header and an `endpoints=(…)` token naming a collector,
+# and this site has no backend to collect them.
+#
+# What is NOT given up: `scripts/web-attest.py` still emits a `modulepreload`
+# link carrying a hash for every chunk the entry script imports, every
+# `integrity` attribute is still present and still enforced by every engine,
+# and `make web-deploy-check` still fails a bundle whose attestation is
+# incomplete. The loss is confined to the runtime refusal of a script that
+# arrives with no metadata at all.
+#
+# Restore `Integrity-Policy:` the moment WebKit 326340 is fixed, or sooner if
+# the island is ever bundled into a single module with no imports — with no
+# import there is nothing for WebKit to refuse.
 #
 # `Cache-Control` here is stated rather than inherited. Cloudflare's own
 # default for static assets happens to be the same value, but a platform
@@ -53,7 +94,7 @@
   Cross-Origin-Opener-Policy: same-origin
   X-Content-Type-Options: nosniff
   Referrer-Policy: no-referrer
-  Integrity-Policy: blocked-destinations=(script)
+  Integrity-Policy-Report-Only: blocked-destinations=(script)
   Cache-Control: public, max-age=0, must-revalidate
 
 # Content-addressed, so a URL's bytes never change and an old HTML keeps
