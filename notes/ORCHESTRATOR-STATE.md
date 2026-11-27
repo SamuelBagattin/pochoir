@@ -808,6 +808,66 @@ would have to unpick. No AuthProxy site was created; his orgs are untouched.
 **Rotation:** `deploy-plumbing` is at 358k and `web-ui` at 518k. Both are past the mark. The next
 task in either lane goes to a fresh session from a handover note.
 
+## LIVE — https://pochoir.sam-bagattin.workers.dev, 2026-11-27
+
+Public, no gate, no custom domain. `pochoir.app` stays unregistered on Samuel's instruction.
+Deployed by `workflow_dispatch` with the typed confirmation, run 45972408309, version
+`8aaa546d-c56b-48d6-8561-8d99201424af`.
+
+**Samuel has given standing approval to deploy the empty-mark fix on merge.** That approval is
+for that fix; it is not a general licence to deploy whatever lands next.
+
+### The first deploy failed, and the failure was worth having
+
+Run 45971442990 died in `reproduce and attest`, so `publish` never ran and nothing went live.
+`check-repro.sh` declared `#!/bin/sh` and used `read -d ''`; macOS `/bin/sh` is bash 3.2 and
+accepts it, `ubuntu-latest` `/bin/sh` is dash and does not. The copy loop produced an empty tree
+and the build died with "No rule to make target 'wasm'" — a message pointing nowhere near the
+cause. **All our development is macOS and all our CI is Linux, so this class of bug is invisible
+until CI runs it.** I reproduced `read: Illegal option -d` under dash myself before merging the
+fix, which keeps the NUL delimiter and declares bash, because `git ls-files -z` exists so a
+filename containing a newline cannot split in two — trading a portability bug for a correctness
+one is not a fix. A sweep found no other bashism under an `sh` shebang.
+
+### ADR-0004 Decision 1's last open question is answered
+
+`reproduce and attest` passed on `ubuntu-latest` in run 45972408309. **A Linux runner and this
+Mac produce the same wasm bytes**, with a pinned toolchain and two `RUSTFLAGS` entries, no
+container. That was the question that could have forced Decision 1's runner-up — a digest-pinned
+container — in a superseding ADR. It does not. **This needs ticking in ADR-0004 itself with the
+run id, not left here**: a decision recorded only in this file is one the next session cannot
+find. Queued for the next docs session.
+
+### Verified against the live origin
+
+- An unmatched path returns **404 with the full security header set**, so Cloudflare's asset
+  router answered rather than the no-op Worker. That is precisely the claim the 404 session
+  refused to assert without a deploy, and it holds.
+- CSP, `nosniff`, `no-referrer` and COOP all present on `/`.
+- `POCHOIR_ORIGIN` is now set as a repository variable, so future runs verify themselves. It
+  could not exist before the first deploy, which is why run 45972408309's last step failed after
+  a successful upload.
+
+**A mistake of mine, for the record.** I ran `make web-verify-live` against a local `web/dist`
+built *without* the engine placed, and reported mismatches and missing files. The live bundle was
+fine; my manifest was from a different build. Verify against a tree built the same way CI builds
+it, or the check compares two unrelated things.
+
+### The one user-visible defect, found by using the live site
+
+Dropping a photo before typing anything shows: *"Le moteur a refusé un réglage envoyé par
+l'interface. C'est un défaut de notre côté…"*. Confirmed by calling the module directly:
+
+    empty string   status=1 detail="mark text"
+    whitespace     status=1 detail="mark text"
+    real text      status=0
+
+`Mark::prepared()` refuses empty text, and the interface requests a preview the moment an image
+loads, before any mark exists. We call the engine with a mark we know it will refuse and then
+correctly tell the user it is our fault. The fix is not to make the call. Second-order problem
+briefed with it: the message advises reloading, and reloading cannot help — advice that cannot
+work is worse than vague advice.
+
 ## Reserved numbers
 
 - ADR-0001 stack and dependency policy — `adr-design`, merged, `Proposed`
