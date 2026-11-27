@@ -628,6 +628,10 @@
   margin-top: var(--s-5);
 }
 
+.prose .actions {
+  margin-top: var(--s-6);
+}
+
 .prose p,
 .prose ul,
 .prose ol {
