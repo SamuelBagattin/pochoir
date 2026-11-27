@@ -17,10 +17,20 @@ What it checks, per file in the manifest:
   * for the engine module, that Content-Type is exactly `application/wasm`,
     because `WebAssembly.instantiateStreaming` rejects anything else.
 
-And once, for the site root: that the security headers the deploy is supposed
-to be carrying are present, since `_headers` is uploaded as part of the bundle
-and a silently dropped header is indistinguishable from a working deploy until
-someone reads a response.
+And twice more, on paths rather than files:
+
+  * the site root, for the security headers the deploy is supposed to be
+    carrying — `_headers` is uploaded as part of the bundle, and a silently
+    dropped header is indistinguishable from a working deploy until someone
+    reads a response;
+  * **an unmatched path**, which is the one check that settles a question
+    nothing local can. `wrangler.jsonc` sets `not_found_handling: "404-page"`
+    so that a 404 is answered by the asset router, where `_headers` applies,
+    rather than by the no-op Worker wrangler uploads, where Cloudflare
+    documents that it does not. That reasoning is sound and unobserved. If the
+    Worker answers first, this request comes back with none of the headers
+    below, and that is a real finding rather than a cosmetic one — it would
+    mean a page on our origin served without a Content-Security-Policy.
 
 Standard library only — urllib, not a client we would have to justify.
 Exit 0 when everything matches, 1 on any mismatch, 2 on usage.
@@ -149,6 +159,36 @@ def main(argv: list[str]) -> int:
     csp = headers.get("content-security-policy", "")
     if "'unsafe-inline'" in csp or "'unsafe-eval'" in csp:
         problems.append("/: the served CSP contains 'unsafe-inline' or 'unsafe-eval'")
+
+    # The unmatched path. A random segment, so it cannot collide with a real
+    # asset or with anything a future router learns to answer.
+    probe = f"{origin}/pochoir-verify-live-{hashlib.sha256(origin.encode()).hexdigest()[:12]}"
+    status, body, headers = fetch(probe, args.timeout)
+    print(f"  unmatched path -> HTTP {status}")
+    if status != 404:
+        problems.append(
+            f"an unmatched path returned HTTP {status}, not 404. With "
+            f"not_found_handling it should be 404; a 200 would mean every typo "
+            f"renders as the application"
+        )
+    missing_on_404 = [name for name in REQUIRED_HEADERS if name not in headers]
+    if missing_on_404:
+        problems.append(
+            "the 404 response is missing "
+            + ", ".join(missing_on_404)
+            + ". This is the case wrangler.jsonc records as unverified: the "
+            "uploaded no-op Worker answered instead of the asset router, and "
+            "_headers does not reach Worker-generated responses"
+        )
+    else:
+        print("    carries the security headers: the asset router answered, "
+              "not the no-op Worker")
+    ctype_404 = headers.get("content-type", "").split(";")[0].strip()
+    if status == 404 and ctype_404 != "text/html":
+        problems.append(
+            f"the 404 response has Content-Type {ctype_404!r}; the built "
+            f"404.html should be served as text/html"
+        )
 
     if problems:
         print(f"\nverify-live: FAILED after {checked} file(s)", file=sys.stderr)

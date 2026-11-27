@@ -99,8 +99,15 @@ Stated as unknowns rather than guessed at.
 - **Whether `/_pochoir/engine/*` matches as expected.** Only the trailing
   splat is documented, which is why the engine has its own directory instead of
   a `*.wasm` pattern.
-- **The 404 path.** See below; it follows from Cloudflare's documented rule,
-  not from a measurement.
+- **The 404 path**, and it is the one case now wired to settle itself.
+  `wrangler.jsonc` sets `not_found_handling: "404-page"` so the asset router
+  answers, where `_headers` applies, rather than the no-op Worker, where
+  Cloudflare documents that it does not. `make web-serve` emulates that
+  locally — an unmatched path returns `dist/404.html` with the full header set
+  — and every emulated 404 carries an `X-Pochoir-Emulated` header saying what
+  is not being emulated. `make web-verify-live` then asserts it against the
+  real origin and **fails** if the 404 is missing the security headers. So the
+  first deploy answers the question without anyone remembering to ask.
 - **Cross-host reproducibility.** `make web-reproduce` compares two builds on
   one machine. Whether a Linux CI runner and a macOS laptop produce the same
   `files_digest` is unmeasured for the web bundle, as ADR-0004 records it is

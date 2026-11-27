@@ -219,11 +219,23 @@ this is a header gap rather than a risk — but ADR-0001's "no Worker code"
 premise, which ADR-0004 Decision 5 restates as "with no Worker, `_headers` is
 all of it", is narrower than it reads.
 
-Recorded, not fixed. The fix is a `404.astro` plus `"not_found_handling":
-"404-page"`, which keeps the response inside the asset router; that needs a
-page written in French and belongs to whoever owns `web/src`. Not verified
-against a live deployment: it follows from Cloudflare's documented rule and
-from the artefact wrangler emits.
+**Fixed since, by the web session:** `web/src/pages/404.astro` plus
+`"not_found_handling": "404-page"`, which keeps the response inside the asset
+router where `_headers` applies.
+
+Two things were then added here so the fix cannot silently rot. `web-serve.py`
+emulates `not_found_handling` — a deliberate widening of what that script is,
+because a local server that answered its own bare 404 would show the headers
+missing on precisely the path we had just fixed, and a tool nobody can trust
+for a path is worse than no tool for it. And `verify-live.py` fetches an
+unmatched path from the live origin and **fails** if the response is not a 404
+carrying the security headers.
+
+That second one matters most: whether the uploaded no-op Worker defers to the
+asset router or answers first is still unobserved, and no local server can
+decide it. Every emulated 404 therefore carries an `X-Pochoir-Emulated` header
+saying so, and the live check settles it on the first deploy rather than
+leaving it as a line in a document.
 
 ## Consequences
 
@@ -246,9 +258,10 @@ from the artefact wrangler emits.
 Without a Cloudflare account, and stated as unknowns rather than assumed:
 whether `_headers` comments parse as written, whether `!` detaches as
 documented, whether `Integrity-Policy`, `Cross-Origin-Opener-Policy` and
-`Content-Type` survive `_headers` at all, whether `/_pochoir/engine/*` matches
-as expected, and the 404 behaviour of Decision 6. One `curl -I` against the
-first preview settles every one of them; `docs/DEPLOY.md` carries the list.
+`Content-Type` survive `_headers` at all, and whether `/_pochoir/engine/*` matches
+as expected. One `curl -I` against the first preview settles every one of them;
+`docs/DEPLOY.md` carries the list. Decision 6's 404 behaviour is no longer on
+it: `make web-verify-live` asserts it automatically.
 
 Cross-host reproducibility of the web bundle is also unmeasured — `make
 web-reproduce` compares two paths on one machine, which is the same limit
