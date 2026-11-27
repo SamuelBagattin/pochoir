@@ -129,6 +129,10 @@ Measured, by appending one line to the imported chunk and reloading:
 | `<link rel="modulepreload" integrity>` added for the chunk | blocked | does not mount, error in the console |
 | `modulepreload` + `Integrity-Policy`, untampered | — | mounts and renders normally |
 
+**Every row of that table was measured in Chromium, and the table does not say
+so.** That omission is corrected below, because three of the four rows come out
+differently in WebKit.
+
 So ADR-0004 Decision 2 as written would have shipped a scheme attesting
 20 235 of the 70 548 bytes the main thread executes — **28.7%** — and 0 of the
 4 909 bytes the Web Worker executes, while ADR-0004's own recommended hardening
@@ -137,7 +141,13 @@ header would have taken the site down.
 **Decision: `web-attest.py` walks the module graph of every script the HTML
 references and emits a `<link rel="modulepreload" href=… integrity=…>` for each
 chunk, and `_headers` ships `Integrity-Policy: blocked-destinations=(script)`
-on the strength of that.** `--verify` then asserts the result is complete: every
+on the strength of that.**
+
+> **Amended 2026-11-27.** The header ships as `Integrity-Policy-Report-Only`.
+> The enforcing form made the site a blank page in Safari — see *What WebKit
+> does instead*, below. The `web-attest.py` half of this decision is unchanged
+> and still asserted by CI.
+ `--verify` then asserts the result is complete: every
 reference carries a hash matching its file, every imported module has a
 preload, and any JavaScript in the build that no mechanism covers is a build
 failure unless it is one of two named exceptions. A chunk the import scanner
@@ -147,8 +157,66 @@ fails to see therefore fails CI instead of blanking production.
 by its owner rather than left in a second file.** It is recorded here, and not
 patched into ADR-0004, because that ADR was not this session's to edit.
 
-### The two things still unattested, named rather than glossed
+### What WebKit does instead, measured after the first deploy
 
+Pochoir went live and was a blank page in Safari: the static HTML rendered, the
+island never mounted, and the middle of the page was empty. Measured on
+2026-11-27 against this build served by `make web-serve`, in Mobile Safari on
+iOS 26.5, and corroborated against the live origin in Safari 27.2 on macOS.
+Each row is an access log from the local server plus a screenshot:
+
+| Configuration | Chunk requested? | Page in Safari |
+| --- | --- | --- |
+| as shipped: `modulepreload` + enforcing `Integrity-Policy` | **no** | **blank** — the island never mounts |
+| `Integrity-Policy` removed | yes | mounts and renders normally |
+| `Integrity-Policy-Report-Only` | yes | mounts and renders normally |
+| enforcing, entry `<script>`'s `integrity` attribute deleted | n/a — entry itself refused | blank |
+| `Integrity-Policy-Report-Only` + **tampered** chunk | yes | **mounts and renders normally** |
+
+Two separate findings, and the second is the worse one.
+
+**WebKit does not credit a `modulepreload` link's `integrity` to the module
+import it covers.** The last row is the proof: a chunk altered so that its
+bytes no longer match the hash on its own `modulepreload` link was fetched and
+executed without complaint. Chromium blocks exactly that case — row 3 of the
+table above. So the workaround at the heart of this decision raises coverage
+from 28.7% to 93.5% in Chromium and leaves it at **28.7% in Safari**. The
+central claim of Decision 5 is engine-specific and was not written that way.
+
+**And that is why the enforcing header could not ship.** Rows 1 and 4 together
+say what WebKit is actually doing: it enforces `blocked-destinations=(script)`
+correctly, and it honours an `integrity` attribute on a `<script>` the HTML
+names — delete that attribute and WebKit refuses the entry script too. It
+simply has no metadata for an import, because the `modulepreload` link does not
+reach it. Under the enforcing header every code-split chunk is therefore a
+script arriving with nothing, and is refused before the request is even made.
+WebKit bug 326340.
+
+The retreat to `Integrity-Policy-Report-Only` is recorded in
+`web/public/_headers` with the condition for undoing it. It costs the browser's
+refusal of a script bearing no metadata at all — a defence in depth over the
+`integrity` attributes, which are unaffected — and it costs it in Chromium too,
+since report-only blocks nothing anywhere. It buys back every Safari user, who
+on a French site about photographing identity documents are most of the mobile
+audience. It is not a close call, but it is a real reduction.
+
+Note also that report-only sends **no reports**: that needs a
+`Reporting-Endpoints` header and an `endpoints=(…)` token naming a collector,
+and this site has no backend and `connect-src 'self'`. What it keeps is the
+declaration in the response and a console warning in engines that implement it.
+
+**The way to get enforcement back without waiting for WebKit** is to stop
+code-splitting the island: one module with no imports has nothing for WebKit to
+refuse, and the entry script's own `integrity` attribute then covers all of it.
+That is a change to the Vite configuration under `web/`, it trades a little
+caching granularity for it, and it was out of scope for the session that
+measured this.
+
+### The things still unattested, named rather than glossed
+
+- **`_pochoir/index-client.*.js`, 50 313 bytes, in WebKit only.** Attested in
+  the build and enforced by Chromium; not checked at all by Safari, for the
+  reason measured above. Added to this list 2026-11-27.
 - **`_pochoir/worker-*.js`, 4 909 bytes.** `new Worker(url)` has no integrity
   option, and the request's destination is `worker`, not `script`, so
   `Integrity-Policy` does not reach it either — measured: the worker loads
@@ -260,7 +328,14 @@ whether `_headers` comments parse as written, whether `!` detaches as
 documented, whether `Integrity-Policy`, `Cross-Origin-Opener-Policy` and
 `Content-Type` survive `_headers` at all, and whether `/_pochoir/engine/*` matches
 as expected. One `curl -I` against the first preview settles every one of them;
-`docs/DEPLOY.md` carries the list. Decision 6's 404 behaviour is no longer on
+`docs/DEPLOY.md` carries the list.
+
+**Answered on 2026-11-27 by the first deploy.** `curl -I` against the live
+origin returns the Content-Security-Policy intact on one line, plus
+`cross-origin-opener-policy`, `integrity-policy`, `referrer-policy` and
+`x-content-type-options`. So the comments parse, and `Integrity-Policy` and COOP
+both survive `_headers`. That the header arrived and was obeyed is precisely how
+Safari came to be broken. Decision 6's 404 behaviour is no longer on
 it: `make web-verify-live` asserts it automatically.
 
 Cross-host reproducibility of the web bundle is also unmeasured — `make

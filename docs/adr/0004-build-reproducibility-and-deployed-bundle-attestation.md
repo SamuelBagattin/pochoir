@@ -347,7 +347,15 @@ Firefox 145 (reporting partial), Safari 26
 (<https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Integrity-Policy>).
 It makes integrity *mandatory* for a destination, which closes a real hole — an
 attacker who can rewrite our HTML could otherwise simply delete the `integrity`
-attributes. **But its destinations are only `script` and `style`**; the spec says
+attributes.
+
+> **Amended 2026-11-27.** "Shipping in Safari 26" was read off a compatibility
+> table and taken to mean the header is usable there. It is not, for a
+> code-split bundle. WebKit enforces the policy but does not credit a
+> `modulepreload` link's `integrity` to the module import it covers, so every
+> imported chunk is refused. Measured, not inferred — see *The ceiling*, point
+> 4. A compatibility table says a feature exists; it does not say the feature
+> agrees with the other engines about what satisfies it. **But its destinations are only `script` and `style`**; the spec says
 "The possible values for it are \"script\" and \"style\""
 (<https://w3c.github.io/webappsec-subresource-integrity/#integrity-policy-section>).
 There is no `fetch` or wasm destination, so it cannot be made to cover our
@@ -369,9 +377,21 @@ every `<script>` and `<link>` the site serves.** We will additionally send
 `Integrity-Policy: blocked-destinations=(script)` so that scripts without
 integrity metadata are refused rather than silently allowed.
 
+> **Amended 2026-11-27, second sentence only.** That header now ships as
+> `Integrity-Policy-Report-Only`. Sending the enforcing form made the site a
+> blank page in every version of Safari, for the reason given in *The ceiling*,
+> point 4. The first sentence is untouched and still holds: the `integrity`
+> attributes and the `fetch` integrity on the engine are enforced by every
+> engine, including Safari. What was lost is only the refusal of a script that
+> arrives carrying no metadata at all. Restore the enforcing form when WebKit
+> 326340 is fixed.
+
 This is chosen because it is specified, because the check happens before our code
 can touch the bytes, and above all because it works in Safari — which rules out
-every other candidate that would have been stronger on paper. The streaming loss
+every other candidate that would have been stronger on paper. *(The Safari claim
+holds for the `integrity` attributes and for `fetch` integrity, which were what
+this comparison turned on. It does not hold for the `Integrity-Policy` header,
+as the amendment above records.)* The streaming loss
 is accepted deliberately and should be recorded in the first performance
 measurement, not forgotten.
 
@@ -576,7 +596,9 @@ otherwise.
 **For a web application served from infrastructure we control, there is no
 mechanism that fully closes the gap between published source and executed bytes,
 and this ADR does not claim one.** The limit is structural, not a gap in our
-scheme, and it has three parts.
+scheme, and it has four parts. The first three are about trust; the fourth is
+about what browsers will actually enforce, and it was added after the first
+deploy measured it.
 
 1. **Every root of trust we can offer is served by us or signed by a key we
    hold.** The browser has no independent notion of "the Pochoir that the
@@ -617,6 +639,53 @@ scheme, and it has three parts.
    The defensible claim is the technical one: a public record converts a silent
    targeted swap into a detectable and attributable one, which raises the cost and
    the political risk of the order. Anything stronger is speculation.
+
+4. **Two of the files we ship cannot be covered by any integrity mechanism in
+   a shipping browser, and a third is covered in only one engine.** This is the
+   most concrete part of the ceiling and the easiest to overstate, so it is
+   given as bytes. The main thread executes 70 548 bytes of JavaScript across
+   two files and the Web Worker a further 4 909.
+
+   | File | Bytes | Chromium | WebKit / Safari |
+   | --- | --- | --- | --- |
+   | `index.astro_…js`, the entry | 20 235 | enforced, `integrity` attribute | enforced, `integrity` attribute |
+   | `index-client.*.js`, imported by it | 50 313 | enforced, via `modulepreload` | **not checked** |
+   | `worker-*.js` | 4 909 | **not checked** | **not checked** |
+
+   The worker is a limit of the platform and always was: `new Worker(url)` has
+   no integrity option, and the request's destination is `worker`, not
+   `script`, so `Integrity-Policy` never reaches it either. Nothing in any
+   shipping engine closes it.
+
+   The imported chunk is the one we thought we had closed and had not, outside
+   Chromium. **A static ES `import` carries no integrity metadata and there is
+   no attribute that can give it any** (ADR-0009 Decision 5). The workaround is
+   a `<link rel="modulepreload" href=… integrity=…>` for each chunk, which
+   Chromium credits to the import. **Measured 2026-11-27 in Mobile Safari on
+   iOS 26.5: WebKit does not. A chunk whose bytes were altered so that they no
+   longer match the hash on its `modulepreload` link was fetched and executed,
+   and the page mounted normally.** So in Safari the enforced share of the main
+   thread is 20 235 of 70 548 bytes — 28.7% — which is exactly the figure
+   ADR-0009 Decision 5 believed it had fixed.
+
+   Worse, the same gap made the enforcing form of `Integrity-Policy`
+   unshippable. WebKit *does* enforce `blocked-destinations=(script)`, and it
+   *does* honour an `integrity` attribute on a `<script>` the HTML names — a
+   build with that attribute deleted is refused there. What it will not do is
+   accept a `modulepreload` link as the metadata for the import it covers, so
+   under the enforcing header every code-split chunk is a script with no
+   metadata and is refused outright. The live site was a blank page in Safari
+   from the first deploy until this was measured. WebKit bug 326340. The header
+   now ships as `Integrity-Policy-Report-Only`; `web/public/_headers` carries
+   the measurement and the condition for restoring it.
+
+   The honest statement to a reader is therefore narrower than Decision 2's:
+   *in Chromium the browser refuses 93.5% of the JavaScript we ship if its
+   bytes do not match; in Safari, 26.8%; the Web Worker is covered in neither,
+   and for all of it the manifest and an independent rebuild are the only
+   check.* Both engines still enforce `fetch` integrity on the wasm engine
+   itself, which is the largest single artefact and the one Decision 2 was
+   mainly about.
 
 The only two things that genuinely close the loop need someone other than us: a
 third party who rebuilds and publishes independently, and a user who keeps a copy
@@ -969,7 +1038,14 @@ minified-but-unmapped output, which ADR-0001 had already ruled out.
   need. Not documented as possible.
 - **Exact release dates for Safari 26 and Firefox 145**, cited for
   `Integrity-Policy` support. Version numbers come from MDN's compat data; the
-  dates were not confirmed against a primary release page.
+  dates were not confirmed against a primary release page. *(2026-11-27: the
+  Safari entry turned out to be the more important problem. The compat table
+  was right that the header exists there and wrong, by omission, about whether
+  it is usable — see the ceiling, point 4. Firefox is still unmeasured by us.)*
+- **Firefox.** Everything in the ceiling's point 4 is measured in Chromium and
+  in WebKit only. Whether Gecko credits a `modulepreload` link's `integrity` to
+  the import it covers has not been tested, and should be before anyone quotes
+  the 93.5% figure as applying to it.
 
 ## References
 
