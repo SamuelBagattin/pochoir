@@ -1,7 +1,7 @@
 # ADR-0008: The WebAssembly ABI, and how the preview is rendered
 
 - **Status:** Proposed
-- **Date:** 2026-11-26
+- **Date:** 2026-11-26, amended 2026-11-27 with Decisions 8 and 9
 - **Deciders:** the implementing session, for Samuel Bagattin's review
 - **Supersedes:** nothing. It settles questions
   [ADR-0002](0002-watermark-algorithm-and-quality-modes.md) and
@@ -315,6 +315,117 @@ catch-all arm because `pochoir_core::Error` is `#[non_exhaustive]`: a variant
 added upstream surfaces as `INTERNAL`, a bug to report, rather than as a
 plausible-looking lie about the user's input.
 
+## Decision 8 — The result header gains one accessor for warnings, and it is a bitmask
+
+**`pochoir_result_warnings(handle) -> u32`. Bit 0 is "the mark was shrunk", bit
+1 is "the mark has poor contrast against the page". `0` on every failure, `0`
+when there is nothing to say, and a caller masks for the bits it knows.**
+
+This answers open question 4 below, and it answers it for both warnings at once
+rather than twice, because the question was never about the shrink in
+particular: it was about whether this ABI can say anything at all about a
+result it nonetheless produced. ADR-0010 then produced a second fact of exactly
+that shape — `Composition::has_poor_contrast()` — and a mechanism invented
+separately for each would have been two mechanisms for one problem.
+
+The constraint is unchanged from the way open question 4 put it. A warning is
+not a failure: ADR-0007 Decision 2 and ADR-0010 both draw the mark and tell the
+caller, because refusing to mark a document that can be marked imperfectly is
+worse than marking it and saying so. So it cannot travel as a status. And on a
+success `ptr`/`len` are the document or the bitmap, which the caller copies out
+as they stand, so it cannot travel there either.
+
+Of the three candidates open question 4 named:
+
+| option | cost |
+| --- | --- |
+| **another accessor** | one export; nothing an existing caller reads changes meaning; 30 spare bits |
+| another header field | the header is not a struct the caller sees — it *is* the five accessors, so "a field" and "an accessor" are the same change, spelled differently |
+| framing the success payload | every caller's copy-out path changes, and the zero-copy property of `pochoir_result_ptr` goes with it, to carry two booleans |
+
+So: an accessor. A bitmask rather than one export per warning, because the next
+fact of this kind is then a bit rather than an export, and because a caller
+reads it in the same place it reads the status.
+
+**What the mask deliberately does not carry.** The CLI's contrast warning names
+the colour it drew, the percentage of the page the mark is invisible over, the
+page's median luminance, and what the other candidate would have reached. None
+of that is here, and the browser's message is the poorer for it. Two reasons,
+and the first is sufficient: those are four numbers, in four units, and putting
+them on this wire means either a second packed struct coming back or four more
+accessors — a wide ABI for a message, which is a thing to design once there is
+a second reason to want it rather than to guess at now.
+
+The second is that the distinction the user actually needs does not require
+them. The bit means something different depending on what was asked for — with
+the automatic colour it means *this page defeats both candidates*, with a fixed
+colour it means *that colour is close to this page's tone*, and the two have
+different remedies — and **the caller knows which request it sent.** So the
+wire carries the fact and the caller carries the context, which is the same
+division of labour Decision 5 settled for the failure payload: data here,
+sentence there. `web/src/i18n/fr.ts` has two strings for the one bit.
+
+**What a caller must not do** is read the mask before the status. A failure
+carries no bits, by construction — `Outcome::failed` sets them to zero — but a
+caller that reported a contrast problem about a document that was never made
+would be saying two different things about one render.
+
+## Decision 9 — The colour's top byte becomes a mode byte rather than growing the struct
+
+**Offset 36 is `0x00RRGGBB` for that exact colour, `0x01000000` for *measure
+the page and choose*, and **nothing else**: every other word is `BAD_ARGUMENT`
+naming `mark colour mode`.**
+
+ADR-0010 made `MarkColour::Automatic` the engine's default and recorded, as the
+consequence that mattered most, that the browser could not reach it: this ABI
+had carried an explicit packed colour since it was written, so every request
+through it was `Fixed`. Measured on the deployed build before this change, a
+near-black page came back with 0.34% of the preview differing from the
+background. The engine was fixed and the product was not.
+
+**Why the top byte.** The struct is full — ten fields run 0..40 and the seed
+fills 40..48 — so a separate flag means a 52-byte struct and a new
+`OPTIONS_BYTES` on both sides. It would also be a second field that has to
+agree with the first, and a misread colour byte is a wrong-coloured mark rather
+than an error: there is no status to notice it by. One field with one meaning —
+"the colour, or the instruction to choose one" — has exactly one illegal shape.
+
+**Why `0x01RRGGBB` is refused rather than resolved.** It is a caller that set
+the automatic flag and also sent a colour, and there is no way to know which it
+meant. Both readings produce a document that does not say what the user asked
+it to say, which is the rule Decision 2 and ADR-0007 Decision 2 are both
+instances of. So neither is chosen.
+
+**Why changing the meaning of shipped bits is permissible here.**
+`OPTIONS_VERSION` stays 1. Nothing depends on the old meaning except the build
+this change replaces, and that build is served from the same origin as the
+bundle that calls it — ADR-0004's attestation makes the engine and its caller
+one artefact, so there is no deployed combination of an old engine and a new
+client to keep compatible. A caller sending the old `0x001A1A1A` still gets
+exactly `#1A1A1A`; the only words whose meaning changed are the ones no client
+ever sent, which the test that asserted the top byte was ignored was the only
+thing relying on. That test is changed, not deleted: the bits it described are
+the ones that moved.
+
+**The default is the automatic choice, on both sides.** `DEFAULT_OPTIONS` in
+`web/src/engine/options.ts` carried `#1a1a1a` from the first commit, which is
+why the engine's new default was unreachable even in principle. Somebody who
+never opens the colour control must get a mark they can see, and on the
+documents this audience photographs — a bank app, an insurance portal, an
+identity document held on a phone, screenshotted in dark mode — a fixed dark
+grey is not one.
+
+**Both sides are pinned to the same bytes.** `web/test/options-wire.ts` asserts
+that `packOptions(DEFAULT_OPTIONS)` produces one 48-byte literal, and
+`the_bytes_the_browser_packs_by_default_are_the_automatic_choice` in
+`crates/pochoir-wasm/src/options.rs` asserts that the engine reads that same
+literal as `Automatic`. The hex string appears in both files so that the two
+can be read side by side; neither side can move the field without the other's
+copy having to move with it. The browser check runs under `node
+--experimental-transform-types` and needs no test framework and no new
+dependency; it is **not** wired into `make check`, which needs a Makefile
+target that this ADR's session was not scoped to add.
+
 ## Consequences
 
 - The browser can call the engine. `make wasm` produces
@@ -352,13 +463,18 @@ plausible-looking lie about the user's input.
    principle — and the largest implementation cost.
 3. **Should the resampler move into `pochoir-core`?** Decision 3's last section.
    Not urgent while this crate is its only user.
-4. **A shrunken mark has no way to reach the browser.** `Composition` gained
-   `shrink_ratio()` and `was_shrunk_noticeably()`, and the CLI prints a warning
-   from them. This ABI cannot carry it: a warning is not a failure, so it
-   cannot travel as a status, and the success payload is the document or the
-   bitmap. It needs either another export, another field in the header, or a
-   framing of the success payload — all three are ABI changes, and the right
-   one depends on what else will eventually need to come back the same way.
-   Deliberately not guessed here; left for scoping. `image_to_pdf_observed`
-   and `render_to_pdf_observed`'s third closure argument are where the value
-   would come from.
+4. ~~**A shrunken mark has no way to reach the browser.**~~ **Answered by
+   Decision 8** on 2026-11-27, as a bitmask on a new accessor, and answered for
+   ADR-0010's contrast warning in the same mechanism — the question turned out
+   not to be about the shrink but about whether this ABI can say anything at
+   all about a result it produced. The value comes from
+   `image_to_pdf_observed`'s third closure argument on the document path, as
+   this question guessed, and straight from `mark::compose`'s return on the
+   preview path.
+5. **The warning mask carries no numbers.** Decision 8's own objection to
+   itself: the CLI's message names the colour drawn, the fraction of the page
+   the mark is invisible over, the page's median luminance and what the other
+   candidate would have reached, and the browser's message has none of them.
+   For Samuel, once there is a second reason to widen this wire: is a packed
+   result struct coming back worth it, or is "part of this page carries no
+   visible mark" enough for somebody who can see the preview?

@@ -1,3 +1,4 @@
+import type { MarkWarnings } from './module';
 import type { MarkOptions } from './options';
 
 /** Messages the main thread sends into the worker. */
@@ -16,8 +17,14 @@ export type Response =
       pixels: ArrayBuffer;
       width: number;
       height: number;
+      /**
+       * What the engine wants said about a result it produced anyway: see
+       * `MarkWarnings`. A plain object of booleans, so it survives the
+       * structured clone without being transferred.
+       */
+      warnings: MarkWarnings;
     }
-  | { id: number; ok: true; kind: 'pdf'; bytes: ArrayBuffer }
+  | { id: number; ok: true; kind: 'pdf'; bytes: ArrayBuffer; warnings: MarkWarnings }
   | { id: number; ok: false; failure: Failure };
 
 export interface Failure {

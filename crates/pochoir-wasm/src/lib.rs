@@ -1,7 +1,7 @@
 //! The WebAssembly ABI for the Pochoir engine.
 //!
 //! This crate is the only thing between a browser and [`pochoir_core`]. It
-//! exports ten `extern "C"` functions over linear memory and nothing else: no
+//! exports eleven `extern "C"` functions over linear memory and nothing else: no
 //! `wasm-bindgen`, no generated glue, no JSON. A second client could be written
 //! from this module's documentation alone, which is the standard this comment
 //! is held to.
@@ -42,11 +42,14 @@
 //!   handle = pochoir_render_pdf(...)    or pochoir_render_preview(..., max_px)
 //!   status = pochoir_result_status(handle)
 //!   if status == 0:
-//!       ptr    = pochoir_result_ptr(handle)
-//!       len    = pochoir_result_len(handle)
-//!       width  = pochoir_result_width(handle)
-//!       height = pochoir_result_height(handle)
+//!       ptr      = pochoir_result_ptr(handle)
+//!       len      = pochoir_result_len(handle)
+//!       width    = pochoir_result_width(handle)
+//!       height   = pochoir_result_height(handle)
+//!       warnings = pochoir_result_warnings(handle)
 //!       <copy the bytes out>
+//!       <report the warning bits you recognise>
+
 //!   pochoir_result_free(handle)
 //!   pochoir_free(ptr, len)              for each input buffer
 //! ```
@@ -140,6 +143,30 @@
 //!
 //! The bitmap dimensions for a preview; `0` for a PDF and `0` on failure.
 //!
+//! ## `pochoir_result_warnings(handle) -> u32`
+//!
+//! **The success-side channel: facts about a result the engine produced
+//! anyway.** A bitmask, `0` when there is nothing to say, `0` on every failure
+//! and `0` for handle `0`.
+//!
+//! | bit | meaning |
+//! | --- | --- |
+//! | `1 << 0` | the mark text did not fit at the size asked for and was drawn markedly smaller (ADR-0007 Decision 2) |
+//! | `1 << 1` | the mark is invisible over more than 10% of the page (ADR-0010) |
+//!
+//! **Mask for the bits you know and ignore the rest.** A later engine may add
+//! one, and that must not be a breaking change.
+//!
+//! Neither fact can travel any other way. A warning is not a failure — both
+//! ADRs draw the mark and tell the caller rather than refusing — so it cannot
+//! be a status; and on a success `ptr`/`len` are the document or the bitmap,
+//! so it cannot be the payload without framing bytes that are currently
+//! copied out as they stand. Which fact applies is the caller's to word: bit 1
+//! on a request that asked for the automatic colour means *this page defeats
+//! both candidates*, and on a request that pinned a colour it means *that
+//! colour is close to this page's tone* — the caller knows which it sent, so
+//! the wire does not have to carry it.
+//!
 //! # The preview pixel format
 //!
 //! **RGBA8, row-major, top row first, four bytes per pixel, no row padding and
@@ -196,11 +223,12 @@
 //! The field names a `BAD_ARGUMENT` can carry are those the engine already uses
 //! for the parameters it owns — `quality`, `dpi`, `mark font size`,
 //! `mark angle`, `mark opacity`, `mark blur`, `mark text`, `mark tile density`,
-//! `page size`, `preview size`, `max_px` — plus five for fields that exist only
+//! `page size`, `preview size`, `max_px` — plus six for fields that exist only
 //! on the wire, which the engine therefore has no name for:
 //! [`options::FIELD_VERSION`], [`options::FIELD_LENGTH`],
-//! [`options::FIELD_MODE`], [`options::FIELD_PAGE_SIZING`] and
-//! [`options::FIELD_DENSITY`]. A caller maps the ones it recognises and ignores
+//! [`options::FIELD_MODE`], [`options::FIELD_PAGE_SIZING`],
+//! [`options::FIELD_DENSITY`] and
+//! [`options::FIELD_COLOUR_MODE`]. A caller maps the ones it recognises and ignores
 //! the rest; an unrecognised name must degrade to no detail, not to an error.
 //!
 //! ## `pochoir_result_free(handle)`
@@ -224,7 +252,7 @@
 //! | 24 | `f32` | opacity | `0.05..=0.80` |
 //! | 28 | `f32` | blur | σ as a **fraction of the font size**, `0.0..=0.06` |
 //! | 32 | `u32` | tile density | `0` low, `1` normal, `2` high |
-//! | 36 | `u32` | colour | `0x00RRGGBB`; the top byte is ignored |
+//! | 36 | `u32` | colour | `0x00RRGGBB` for that exact colour, `0x01000000` for *choose one from the page*; nothing else |
 //! | 40 | `u64` | jitter seed | `0` means *derive one from the document*; see below |
 //!
 //! Anything else — a short or long buffer, an unknown version, an out-of-range
@@ -232,8 +260,23 @@
 //! value silently moved into range is a document that does not say what the
 //! user asked it to say.
 //!
-//! Three fields repay a second look, because each is a place a caller is likely
+//! Four fields repay a second look, because each is a place a caller is likely
 //! to guess wrong:
+//!
+//! - **The top byte of the colour at offset 36 is a mode byte, not padding.**
+//!   It was ignored until ADR-0010 gave the engine a colour it can choose
+//!   itself, and it is now the only way to ask for that: `0x00RRGGBB` is the
+//!   colour as given, `0x01000000` is *measure the page and choose*, and
+//!   **everything else is `BAD_ARGUMENT`** naming
+//!   [`options::FIELD_COLOUR_MODE`] — including `0x01RRGGBB`, which sets the
+//!   automatic flag and sends a colour, and so means two things at once. The
+//!   mode byte rather than a new field because this struct is full and because
+//!   a flag beside a colour is two fields that have to agree; a misread colour
+//!   byte is a wrong-coloured mark rather than an error, and one field with one
+//!   meaning has exactly one illegal shape. **The automatic choice is the
+//!   engine's default and should be a client's**: a user who never opens the
+//!   colour control must get a mark they can see, which on a dark-mode
+//!   screenshot a fixed `#1A1A1A` is not.
 //!
 //! - **Blur at offset 28 is a ratio, not a pixel count.** ADR-0002 asked for
 //!   "σ ≈ 0.6 px at render resolution, scaled with DPI", which pulls both ways

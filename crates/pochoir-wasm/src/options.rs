@@ -112,6 +112,20 @@ pub const FIELD_MODE: &str = "quality mode";
 pub const FIELD_PAGE_SIZING: &str = "page sizing";
 /// See [`FIELD_VERSION`].
 pub const FIELD_DENSITY: &str = "mark tile density";
+/// See [`FIELD_VERSION`].
+pub const FIELD_COLOUR_MODE: &str = "mark colour mode";
+
+/// Top byte of offset 36 when the low 24 bits are the mark's colour.
+pub const COLOUR_MODE_FIXED: u32 = 0x00;
+
+/// Top byte of offset 36 when the engine is to choose the colour from the page.
+///
+/// The whole word is then `0x0100_0000`: ADR-0010's automatic choice, and the
+/// default. See [`colour_of`] for why the low 24 bits must be zero.
+pub const COLOUR_MODE_AUTOMATIC: u32 = 0x01;
+
+/// The packed word that asks for ADR-0010's automatic colour.
+pub const AUTOMATIC_COLOUR_WORD: u32 = COLOUR_MODE_AUTOMATIC << 24;
 
 fn bad(field: &str) -> Failure {
     Failure::naming(Status::BadArgument, field)
@@ -179,16 +193,8 @@ pub fn parse(raw: &[u8], text: &str) -> Result<Request, Failure> {
         _ => return Err(bad(FIELD_DENSITY)),
     };
 
-    // This ABI has carried an explicit colour since it was written, so every
-    // request through it is `MarkColour::Fixed` and never the automatic choice
-    // ADR-0010 makes the engine's default. Wiring the browser onto that choice
-    // means a wire change, which belongs with the control that exposes it.
     let packed_colour = u32_at(raw, 36).ok_or_else(|| bad(FIELD_LENGTH))?;
-    let colour = MarkColour::Fixed([
-        ((packed_colour >> 16) & 0xFF) as u8,
-        ((packed_colour >> 8) & 0xFF) as u8,
-        (packed_colour & 0xFF) as u8,
-    ]);
+    let colour = colour_of(packed_colour).ok_or_else(|| bad(FIELD_COLOUR_MODE))?;
 
     // Zero means "derive one from the document", which is ADR-0002 Decision 6's
     // behaviour and the engine's own default. Reading it as a literal seed would
@@ -230,6 +236,47 @@ pub fn parse(raw: &[u8], text: &str) -> Result<Request, Failure> {
     Ok(Request { options, mode })
 }
 
+/// Decode offset 36 into a [`MarkColour`], or `None` for a malformed word.
+///
+/// The top byte of this field was ignored until ADR-0010 gave the engine a
+/// colour it can choose itself. It is now a **mode byte**, and it is the whole
+/// of the change:
+///
+/// | word | meaning |
+/// | --- | --- |
+/// | `0x00RRGGBB` | [`MarkColour::Fixed`], exactly the colour given |
+/// | `0x0100_0000` | [`MarkColour::Automatic`], chosen from the page |
+/// | anything else | malformed, [`Status::BadArgument`] |
+///
+/// # Why a sentinel rather than a flag field
+///
+/// The struct is full: the ten fields run 0..40 and the seed fills 40..48, so a
+/// separate flag means a longer struct. It would also be a second field that
+/// has to agree with the first, which is one more way for two callers to
+/// disagree silently — and a misread colour byte is a wrong-coloured mark, not
+/// an error. One field with one meaning, "the colour, or the instruction to
+/// choose one", has exactly one illegal shape, and it is refused below.
+///
+/// # Why mode 1 requires the low bits to be zero
+///
+/// `0x011A_1A1A` is a caller that set the automatic flag and also sent a
+/// colour, and there is no way to tell which it meant. Guessing either way
+/// produces a document that does not say what the user asked it to say, which
+/// is the rule this whole module is written to. So it is refused, naming
+/// [`FIELD_COLOUR_MODE`].
+#[must_use]
+pub const fn colour_of(packed: u32) -> Option<MarkColour> {
+    match packed >> 24 {
+        COLOUR_MODE_FIXED => Some(MarkColour::Fixed([
+            ((packed >> 16) & 0xFF) as u8,
+            ((packed >> 8) & 0xFF) as u8,
+            (packed & 0xFF) as u8,
+        ])),
+        COLOUR_MODE_AUTOMATIC if packed & 0x00FF_FFFF == 0 => Some(MarkColour::Automatic),
+        _ => None,
+    }
+}
+
 fn u32_at(buffer: &[u8], offset: usize) -> Option<u32> {
     Some(u32::from_le_bytes(bytes_at(buffer, offset)?))
 }
@@ -259,8 +306,9 @@ fn bytes_at(buffer: &[u8], offset: usize) -> Option<[u8; 4]> {
 #[cfg(test)]
 mod tests {
     use super::{
-        FIELD_DENSITY, FIELD_LENGTH, FIELD_MODE, FIELD_PAGE_SIZING, FIELD_VERSION, HIGH_QUALITY,
-        OPTIONS_BYTES, OPTIONS_VERSION, QualityMode, STANDARD_QUALITY, parse,
+        AUTOMATIC_COLOUR_WORD, FIELD_COLOUR_MODE, FIELD_DENSITY, FIELD_LENGTH, FIELD_MODE,
+        FIELD_PAGE_SIZING, FIELD_VERSION, HIGH_QUALITY, OPTIONS_BYTES, OPTIONS_VERSION,
+        QualityMode, STANDARD_QUALITY, parse,
     };
     use crate::status::Status;
     use pochoir_core::PageSizing;
@@ -283,7 +331,7 @@ mod tests {
         b.extend_from_slice(&0.30_f32.to_le_bytes()); // 24: opacity
         b.extend_from_slice(&0.015_f32.to_le_bytes()); // 28: blur ratio
         b.extend_from_slice(&1_u32.to_le_bytes()); // 32: normal density
-        b.extend_from_slice(&0x001A_1A1A_u32.to_le_bytes()); // 36: colour
+        b.extend_from_slice(&AUTOMATIC_COLOUR_WORD.to_le_bytes()); // 36: colour, automatic
         b.extend_from_slice(&0_u64.to_le_bytes()); // 40: seed
         assert_eq!(b.len(), OPTIONS_BYTES);
         b
@@ -309,7 +357,10 @@ mod tests {
         assert_eq!(mark.angle_degrees, DEFAULT_ANGLE_DEGREES);
         assert_eq!(mark.opacity, DEFAULT_OPACITY);
         assert_eq!(mark.blur_ratio, DEFAULT_BLUR_RATIO);
-        assert_eq!(mark.colour, MarkColour::Fixed(DARK_COLOUR));
+        // ADR-0010's default, and the point of the wire change: a request that
+        // nobody touched asks the engine to choose, so somebody who never
+        // opens the colour control gets a mark they can see.
+        assert_eq!(mark.colour, MarkColour::Automatic);
         assert_eq!(mark.density, TileDensity::Normal);
     }
 
@@ -471,13 +522,117 @@ mod tests {
         );
     }
 
+    /// The replacement for `the_colour_ignores_the_top_byte`, which asserted
+    /// the old meaning of these eight bits and is wrong now rather than merely
+    /// redundant. It is changed rather than deleted because the bits it
+    /// described are the ones that moved: the top byte is the mode byte, and
+    /// `0x00RRGGBB` — every word the old test would have accepted with a zero
+    /// top byte — still means exactly what it meant.
     #[test]
-    fn the_colour_ignores_the_top_byte() {
-        let request = parse(&with(36, &0xFF12_3456_u32.to_le_bytes()), "X").expect("parses");
+    fn the_top_byte_of_the_colour_is_the_mode_byte() {
         assert_eq!(
-            request.mark().expect("mark").colour,
-            MarkColour::Fixed([0x12, 0x34, 0x56])
+            parse(&with(36, &0x0012_3456_u32.to_le_bytes()), "X")
+                .expect("mode 0 is an explicit colour")
+                .mark()
+                .expect("mark")
+                .colour,
+            MarkColour::Fixed([0x12, 0x34, 0x56]),
+            "a zero top byte keeps the colour it always had"
         );
+        assert_eq!(
+            parse(&with(36, &AUTOMATIC_COLOUR_WORD.to_le_bytes()), "X")
+                .expect("mode 1 is the automatic choice")
+                .mark()
+                .expect("mark")
+                .colour,
+            MarkColour::Automatic
+        );
+        assert_eq!(
+            parse(&with(36, &0x0000_0000_u32.to_le_bytes()), "X")
+                .expect("black is a colour")
+                .mark()
+                .expect("mark")
+                .colour,
+            MarkColour::Fixed([0, 0, 0]),
+            "mode 0 with no colour bits is black, not the automatic choice"
+        );
+        assert_eq!(
+            parse(&with(36, &0x001A_1A1A_u32.to_le_bytes()), "X")
+                .expect("parses")
+                .mark()
+                .expect("mark")
+                .colour,
+            MarkColour::Fixed(DARK_COLOUR),
+            "the colour the browser used to send is still honoured as asked"
+        );
+    }
+
+    /// The exact 48 bytes the browser packs for an untouched request.
+    ///
+    /// **THE SAME LITERAL IS IN `web/test/options-wire.ts`**, which asserts
+    /// that `packOptions(DEFAULT_OPTIONS)` produces it. This asserts that the
+    /// engine reads it as the automatic choice. Between the two, neither side
+    /// can move the colour field without the other's hex string having to
+    /// move with it — and a misread colour byte is a wrong-coloured mark
+    /// rather than an error, so an agreement that is only informal is no
+    /// agreement at all.
+    ///
+    /// Spelled out rather than rebuilt from [`default_bytes`], because a test
+    /// that recomputes what it is checking tests nothing.
+    #[test]
+    fn the_bytes_the_browser_packs_by_default_are_the_automatic_choice() {
+        const DEFAULT_STRUCT_HEX: &str = concat!(
+            "01000000",         // 0  version 1
+            "01000000",         // 4  quality mode: standard
+            "00000000",         // 8  page sizing: cap to A4
+            "c8000000",         // 12 dpi 200
+            "00006040",         // 16 font size 3.5 per cent
+            "0000f0c1",         // 20 angle -30 degrees
+            "9a99993e",         // 24 opacity 0.30
+            "8fc2753c",         // 28 blur ratio 0.015
+            "01000000",         // 32 tile density: normal
+            "00000001",         // 36 colour: 0x01000000, the automatic choice
+            "0000000000000000", // 40 seed 0: derive one from the document
+        );
+
+        let bytes: Vec<u8> = (0..DEFAULT_STRUCT_HEX.len() / 2)
+            .map(|i| {
+                u8::from_str_radix(&DEFAULT_STRUCT_HEX[i * 2..i * 2 + 2], 16)
+                    .expect("the literal above is hex")
+            })
+            .collect();
+        assert_eq!(bytes.len(), OPTIONS_BYTES);
+        assert_eq!(
+            bytes,
+            default_bytes(),
+            "the literal and this module's own packer must agree"
+        );
+
+        let request = parse(&bytes, "Pour X").expect("the browser's default request must parse");
+        let mark = request.mark().expect("a mark is always produced");
+        assert_eq!(
+            mark.colour,
+            MarkColour::Automatic,
+            "the browser's default request must reach ADR-0010's choice"
+        );
+        assert_eq!(mark.opacity, DEFAULT_OPACITY);
+        assert_eq!(request.options.dpi, 200.0);
+    }
+
+    /// A misread colour byte is a wrong-coloured mark, not an error, so the
+    /// only defence is refusing every word that does not mean one thing.
+    #[test]
+    fn a_malformed_colour_word_is_refused_rather_than_guessed() {
+        for word in [
+            0x0100_0001_u32, // automatic, and a colour: which did they mean?
+            0x011A_1A1A,     // the old dark default with the automatic flag set
+            0x0200_0000,     // an undefined mode
+            0xFF12_3456,     // what the old "top byte is ignored" test sent
+        ] {
+            let failure = parse(&with(36, &word.to_le_bytes()), "X").expect_err("must be refused");
+            assert_eq!(failure.status, Status::BadArgument, "{word:#010X}");
+            assert_eq!(failure.detail, FIELD_COLOUR_MODE, "{word:#010X}");
+        }
     }
 
     #[test]
@@ -524,13 +679,14 @@ mod tests {
     /// are the ABI; this pins them.
     #[test]
     fn every_wire_level_refusal_names_its_field() {
-        let cases: [(Vec<u8>, &str); 7] = [
+        let cases: [(Vec<u8>, &str); 8] = [
             (default_bytes()[..47].to_vec(), FIELD_LENGTH),
             (with(0, &2_u32.to_le_bytes()), FIELD_VERSION),
             (with(4, &9_u32.to_le_bytes()), FIELD_MODE),
             (with(4, &0_u32.to_le_bytes()), FIELD_MODE),
             (with(8, &7_u32.to_le_bytes()), FIELD_PAGE_SIZING),
             (with(32, &7_u32.to_le_bytes()), FIELD_DENSITY),
+            (with(36, &0x0300_0000_u32.to_le_bytes()), FIELD_COLOUR_MODE),
             (with(12, &0_u32.to_le_bytes()), "dpi"),
         ];
         for (bytes, want) in cases {

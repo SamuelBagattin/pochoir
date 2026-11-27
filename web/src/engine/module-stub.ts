@@ -1,5 +1,17 @@
-import { EngineError, type PochoirModule, type PreviewBitmap } from './module';
-import { rgbOf, type MarkOptions, type TileDensity } from './options';
+import {
+  EngineError,
+  NO_WARNINGS,
+  type PochoirModule,
+  type PreviewBitmap,
+  type RenderedDocument,
+} from './module';
+import {
+  AUTOMATIC_COLOUR,
+  rgbOf,
+  type MarkColour,
+  type MarkOptions,
+  type TileDensity,
+} from './options';
 
 /**
  * A STUB, AND NO LONGER WIRED UP. `select.ts` returns the real engine; nothing
@@ -40,21 +52,44 @@ export class StubModule implements PochoirModule {
     const ctx = context2d(canvas);
     const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
     await pretendToWork(90, 260);
-    return { pixels: data.data, width: canvas.width, height: canvas.height };
+    // No warnings, ever: this stub does not measure the page, so it cannot
+    // honestly raise either bit. One more reason it is not the product.
+    return {
+      pixels: data.data,
+      width: canvas.width,
+      height: canvas.height,
+      warnings: NO_WARNINGS,
+    };
   }
 
   async renderPdf(
     image: Uint8Array,
     text: string,
     options: MarkOptions,
-  ): Promise<Uint8Array> {
+  ): Promise<RenderedDocument> {
     const canvas = await composite(image, text, options, Number.POSITIVE_INFINITY);
     const quality = { standard: 0.85, high: 0.92 }[options.mode];
     const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality });
     const jpeg = new Uint8Array(await blob.arrayBuffer());
     await pretendToWork(260, 700);
-    return writeSingleImagePdf(jpeg, canvas.width, canvas.height, options.pageSizing);
+    return {
+      bytes: writeSingleImagePdf(jpeg, canvas.width, canvas.height, options.pageSizing),
+      warnings: NO_WARNINGS,
+    };
   }
+}
+
+/**
+ * The colour the stub draws in.
+ *
+ * `'auto'` is ADR-0010's "measure the page and choose", and measuring the page
+ * is exactly what this stub does not do. It falls back to the dark candidate
+ * and is therefore wrong on a dark page in precisely the way the real engine
+ * no longer is — which is fine for laying out the interface and is why this
+ * file must never be what ships.
+ */
+function stubColour(colour: MarkColour): [number, number, number] {
+  return colour === AUTOMATIC_COLOUR ? [0x1a, 0x1a, 0x1a] : rgbOf(colour);
 }
 
 /* -------------------------------------------------------------------------
@@ -97,7 +132,7 @@ async function composite(
   if (lines.length === 0) return canvas;
 
   const fontPx = Math.max(6, (options.fontSizePct / 100) * Math.min(width, height));
-  const [r, g, b] = rgbOf(options.colour);
+  const [r, g, b] = stubColour(options.colour);
 
   ctx.save();
   ctx.globalAlpha = options.opacity;

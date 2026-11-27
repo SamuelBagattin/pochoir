@@ -4,13 +4,12 @@
   import RangeField from './RangeField.svelte';
   import PreviewStage from './PreviewStage.svelte';
   import { EngineClient, ClientError } from '../engine/client';
-  import type { PreviewBitmap } from '../engine/module';
+  import { NO_WARNINGS, type MarkWarnings, type PreviewBitmap } from '../engine/module';
   import {
+    AUTOMATIC_COLOUR,
     DEFAULT_OPTIONS,
     LIMITS,
-    LUMINANCE_WARN_ABOVE,
     normaliseMarkText,
-    relativeLuminance,
     type MarkOptions,
     type TileDensity,
   } from '../engine/options';
@@ -37,6 +36,18 @@
    */
   let markProblem = $state<string | null>(null);
   let unsupported = $state(false);
+  /**
+   * What the engine said about the mark it drew. Not failures: the document
+   * exists either way, and these are the two facts about it that the pixels
+   * do not show — so if we do not say them, nobody does. The CLI always has.
+   */
+  let warnings = $state<MarkWarnings>(NO_WARNINGS);
+  /**
+   * The colour kept aside while the mode is `Automatique`, so that switching
+   * back does not silently hand the user a different colour from the one they
+   * picked. `<input type="color">` has no empty state to return to.
+   */
+  let customColour = $state<`#${string}`>('#1a1a1a');
 
   const client = new EngineClient();
   let debounce: ReturnType<typeof setTimeout> | null = null;
@@ -48,8 +59,23 @@
 
   const mark = $derived(normaliseMarkText(rawText));
   const remaining = $derived(LIMITS.textMaxChars - mark.text.length);
-  const colourTooLight = $derived(relativeLuminance(options.colour) > LUMINANCE_WARN_ABOVE);
   const canExport = $derived(Boolean(file) && bitmap !== null && !exporting);
+  const colourIsAutomatic = $derived(options.colour === AUTOMATIC_COLOUR);
+
+  /**
+   * The contrast warning is one bit on the wire and two sentences here,
+   * because the remedy differs and we are the side that knows which request
+   * we sent. On `Automatique` the page defeats both greys and there is nothing
+   * to correct; on a chosen colour there is.
+   */
+  const contrastWarning = $derived(
+    !warnings.poorContrast
+      ? null
+      : colourIsAutomatic
+        ? t.warnings.poorContrastAuto
+        : t.warnings.poorContrastFixed,
+  );
+  const shrinkWarning = $derived(warnings.shrunk ? t.warnings.markShrunk : null);
 
   const statusLabel = $derived(
     problem || markProblem
@@ -87,6 +113,7 @@
     bitmap = null;
     problem = null;
     markProblem = null;
+    warnings = NO_WARNINGS;
     announcement = '';
     restartWanted = false;
     if (debounce) clearTimeout(debounce);
@@ -129,6 +156,7 @@
       bitmap = null;
       problem = null;
       markProblem = null;
+      warnings = NO_WARNINGS;
       busy = false;
       announcement = '';
       return;
@@ -153,6 +181,7 @@
       bitmap = next;
       problem = null;
       markProblem = null;
+      warnings = next.warnings;
       announcement = t.preview.statusAnnounce;
     } catch (error) {
       if (mine !== generation) return;
@@ -179,8 +208,14 @@
     markProblem = null;
     try {
       const pdf = await client.pdf(mark.text, $state.snapshot(options));
+      // The document's own warnings, not the preview's. They agree in every
+      // case measured, and if they ever did not it is the document that was
+      // downloaded and the document the user is about to send.
+      warnings = pdf.warnings;
       const name = file.name.replace(/\.[^.]+$/, '') + t.actions.suffix + '.pdf';
-      const url = URL.createObjectURL(new Blob([pdf as BlobPart], { type: 'application/pdf' }));
+      const url = URL.createObjectURL(
+        new Blob([pdf.bytes as BlobPart], { type: 'application/pdf' }),
+      );
       const anchor = document.createElement('a');
       anchor.href = url;
       anchor.download = name;
@@ -208,6 +243,11 @@
 
   function resetOptions(): void {
     options = { ...DEFAULT_OPTIONS };
+    scheduleRender();
+  }
+
+  function chooseColourMode(automatic: boolean): void {
+    options.colour = automatic ? AUTOMATIC_COLOUR : customColour;
     scheduleRender();
   }
 
@@ -320,6 +360,13 @@
         {#if mark.truncatedLines}
           <p class="warning-note">{t.mark.tooManyLines}</p>
         {/if}
+        <!-- The shrink warning belongs to the text, not to the export: this
+             is the control that fixes it, and at 200 % zoom the export group
+             is not on the same screen. ADR-0008's open question 4 could not
+             reach here until the result header carried a warning channel. -->
+        {#if shrinkWarning}
+          <p class="warning-note" role="status">{shrinkWarning}</p>
+        {/if}
       </div>
 
       <div class="field">
@@ -410,23 +457,56 @@
       </div>
 
       <div class="field">
-        <label class="field__label" for="opt-colour">{t.controls.colour}</label>
-        <div class="colour-field">
-          <input
-            class="colour-input"
-            type="color"
-            id="opt-colour"
-            value={options.colour}
-            aria-describedby="colour-hint"
-            oninput={(event) => {
-              options.colour = event.currentTarget.value;
-              scheduleRender();
-            }}
-          />
-          <p class="field__hint" id="colour-hint">{t.controls.colourHint}</p>
+        <span class="field__label" id="colour-label">{t.controls.colour}</span>
+        <div class="segmented" role="radiogroup" aria-labelledby="colour-label">
+          <label class="segmented__option">
+            <input
+              type="radio"
+              name="colour-mode"
+              value="auto"
+              checked={colourIsAutomatic}
+              onchange={() => chooseColourMode(true)}
+            />
+            <span>{t.controls.colourAuto}</span>
+          </label>
+          <label class="segmented__option">
+            <input
+              type="radio"
+              name="colour-mode"
+              value="fixed"
+              checked={!colourIsAutomatic}
+              onchange={() => chooseColourMode(false)}
+            />
+            <span>{t.controls.colourCustom}</span>
+          </label>
         </div>
-        {#if colourTooLight}
-          <p class="warning-note" role="status">{t.controls.colourTooLight}</p>
+
+        {#if colourIsAutomatic}
+          <p class="field__hint" id="colour-hint">{t.controls.colourAutoHint}</p>
+        {:else}
+          <div class="colour-field">
+            <input
+              class="colour-input"
+              type="color"
+              id="opt-colour"
+              aria-label={t.controls.colourPickerLabel}
+              value={customColour}
+              aria-describedby="colour-hint"
+              oninput={(event) => {
+                // `<input type="color">` always yields `#rrggbb`, which is the
+                // only shape `colourWord` accepts; it refuses anything else
+                // rather than quietly substituting a default.
+                customColour = event.currentTarget.value as `#${string}`;
+                options.colour = customColour;
+                scheduleRender();
+              }}
+            />
+            <p class="field__hint" id="colour-hint">{t.controls.colourHint}</p>
+          </div>
+        {/if}
+
+        {#if contrastWarning}
+          <p class="warning-note" role="status">{contrastWarning}</p>
         {/if}
       </div>
 

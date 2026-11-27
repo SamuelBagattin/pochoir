@@ -65,6 +65,7 @@ struct ResultHeader {
     bytes: Vec<u8>,
     width: u32,
     height: u32,
+    warnings: u32,
 }
 
 impl ResultHeader {
@@ -74,6 +75,7 @@ impl ResultHeader {
             bytes: outcome.bytes,
             width: outcome.width,
             height: outcome.height,
+            warnings: outcome.warnings,
         }
     }
 
@@ -308,6 +310,28 @@ pub extern "C" fn pochoir_result_height(handle: usize) -> u32 {
     with_header(handle, |header| header.height).unwrap_or(0)
 }
 
+/// What the engine wants to say about a result it nonetheless produced: a
+/// bitmask of [`render::WARNING_MARK_SHRUNK`] and
+/// [`render::WARNING_POOR_CONTRAST`].
+///
+/// `0` when there is nothing to say, on every failure, and for handle `0`.
+///
+/// This is the success-side channel the result header did not have, and it is
+/// the whole of it. A warning is not a failure — ADR-0007 Decision 2 draws the
+/// mark and says so, and ADR-0010 keeps that posture for the colour — so it
+/// cannot travel as a status; and `ptr`/`len` on a success are the document or
+/// the bitmap, so it cannot travel there without framing a payload that is
+/// currently copied out as it stands. An accessor beside the four that already
+/// exist costs one export, changes nothing an existing caller reads, and has
+/// 30 bits left for the next fact of this kind.
+///
+/// **A caller must mask for the bits it knows** and ignore the rest, so that a
+/// later engine can add one without that being a breaking change.
+#[unsafe(no_mangle)]
+pub extern "C" fn pochoir_result_warnings(handle: usize) -> u32 {
+    with_header(handle, |header| header.warnings).unwrap_or(0)
+}
+
 /// Release a result and its bytes. A `handle` of `0` is a no-op.
 ///
 /// # Safety
@@ -331,10 +355,11 @@ mod tests {
     use super::{
         MAX_BUFFER_BYTES, pochoir_alloc, pochoir_free, pochoir_render_pdf, pochoir_render_preview,
         pochoir_result_free, pochoir_result_height, pochoir_result_len, pochoir_result_ptr,
-        pochoir_result_status, pochoir_result_width,
+        pochoir_result_status, pochoir_result_warnings, pochoir_result_width,
     };
     use crate::Status;
-    use crate::options::OPTIONS_BYTES;
+    use crate::options::{AUTOMATIC_COLOUR_WORD, OPTIONS_BYTES};
+    use crate::render::{WARNING_POOR_CONTRAST, WARNINGS_KNOWN};
 
     /// Copy `bytes` into a module buffer, exactly as the JavaScript client does.
     fn copy_in(bytes: &[u8]) -> (usize, usize) {
@@ -361,7 +386,9 @@ mod tests {
         unsafe { core::slice::from_raw_parts(ptr as *const u8, len) }.to_vec()
     }
 
-    fn defaults() -> Vec<u8> {
+    /// The browser's defaults with `colour` spelled explicitly, so a test can
+    /// ask for the automatic choice or pin a colour without a second packer.
+    fn packed(colour: u32) -> Vec<u8> {
         let mut b = Vec::with_capacity(OPTIONS_BYTES);
         b.extend_from_slice(&1_u32.to_le_bytes());
         b.extend_from_slice(&1_u32.to_le_bytes());
@@ -372,9 +399,25 @@ mod tests {
         b.extend_from_slice(&0.30_f32.to_le_bytes());
         b.extend_from_slice(&0.015_f32.to_le_bytes());
         b.extend_from_slice(&1_u32.to_le_bytes());
-        b.extend_from_slice(&0x001A_1A1A_u32.to_le_bytes());
+        b.extend_from_slice(&colour.to_le_bytes());
         b.extend_from_slice(&0_u64.to_le_bytes());
         b
+    }
+
+    fn defaults() -> Vec<u8> {
+        packed(AUTOMATIC_COLOUR_WORD)
+    }
+
+    /// A flat near-black page: Samuel's dark-mode screenshot, reduced to the
+    /// one property that defeated the old fixed default.
+    fn dark_jpeg(width: u32, height: u32) -> Vec<u8> {
+        let mut pixmap = pochoir_core::Pixmap::new(width, height).expect("allocates");
+        for y in 0..height {
+            for x in 0..width {
+                pixmap.set_pixel(x, y, [0x10, 0x10, 0x10, 0xFF]);
+            }
+        }
+        pochoir_core::jpeg::encode(&pixmap, 90, 200.0).expect("encodes")
     }
 
     fn jpeg(width: u32, height: u32) -> Vec<u8> {
@@ -548,7 +591,106 @@ mod tests {
         assert_eq!(pochoir_result_len(0), 0);
         assert_eq!(pochoir_result_width(0), 0);
         assert_eq!(pochoir_result_height(0), 0);
+        assert_eq!(pochoir_result_warnings(0), 0);
         pochoir_result_free(0); // a no-op, not a crash
+    }
+
+    /// The whole point of the wire change, driven through the exports: on a
+    /// near-black page the request the browser sends by default produces a
+    /// visible mark and says nothing, and the same page with `#1A1A1A` pinned
+    /// produces the silent failure ADR-0010 was written about — except that it
+    /// is no longer silent.
+    ///
+    /// Both halves matter. Without the first the automatic sentinel could be
+    /// mis-decoded and nothing would notice; without the second the warning
+    /// bit could be stuck at zero and nothing would notice either.
+    #[test]
+    fn a_dark_page_warns_on_a_pinned_dark_colour_and_not_on_the_automatic_one() {
+        for (options, want, what) in [
+            (defaults(), 0, "the automatic choice"),
+            (
+                packed(0x001A_1A1A),
+                WARNING_POOR_CONTRAST,
+                "a pinned #1A1A1A",
+            ),
+        ] {
+            let image = dark_jpeg(400, 300);
+            let (ip, il) = copy_in(&image);
+            let (tp, tl) = copy_in(TEXT.as_bytes());
+            let (op, ol) = copy_in(&options);
+
+            let handle = pochoir_render_pdf(ip, il, tp, tl, op, ol);
+            assert_eq!(
+                pochoir_result_status(handle),
+                Status::Ok.code(),
+                "{what} must still produce a document"
+            );
+            assert_eq!(
+                pochoir_result_warnings(handle) & WARNINGS_KNOWN,
+                want,
+                "{what} on a near-black page"
+            );
+            pochoir_result_free(handle);
+
+            // And the preview agrees with the document it is previewing: a
+            // preview that said nothing where the PDF warns would put the
+            // warning where nobody looks.
+            let handle = pochoir_render_preview(ip, il, tp, tl, op, ol, 200);
+            assert_eq!(pochoir_result_status(handle), Status::Ok.code());
+            assert_eq!(
+                pochoir_result_warnings(handle) & WARNINGS_KNOWN,
+                want,
+                "{what}, previewed"
+            );
+            pochoir_result_free(handle);
+
+            pochoir_free(op, ol);
+            pochoir_free(tp, tl);
+            pochoir_free(ip, il);
+        }
+    }
+
+    /// A warning describes a document that exists. A failure has none, and a
+    /// caller that read the mask without checking the status first would
+    /// otherwise report a contrast problem about a file that was never made.
+    #[test]
+    fn a_failure_carries_no_warning_bits() {
+        let (ip, il) = copy_in(b"not an image");
+        let (tp, tl) = copy_in(TEXT.as_bytes());
+        let (op, ol) = copy_in(&defaults());
+
+        let handle = pochoir_render_pdf(ip, il, tp, tl, op, ol);
+        assert_eq!(
+            pochoir_result_status(handle),
+            Status::UnsupportedFormat.code()
+        );
+        assert_eq!(pochoir_result_warnings(handle), 0);
+        pochoir_result_free(handle);
+
+        pochoir_free(op, ol);
+        pochoir_free(tp, tl);
+        pochoir_free(ip, il);
+    }
+
+    /// A colour word that means two things at once is refused rather than
+    /// guessed at, and it is refused at the ABI rather than only in the
+    /// parser's own tests.
+    #[test]
+    fn a_malformed_colour_word_is_refused_through_the_exports() {
+        let image = jpeg(64, 64);
+        let (ip, il) = copy_in(&image);
+        let (tp, tl) = copy_in(TEXT.as_bytes());
+        let (op, ol) = copy_in(&packed(AUTOMATIC_COLOUR_WORD | 0x001A_1A1A));
+
+        let handle = pochoir_render_pdf(ip, il, tp, tl, op, ol);
+        assert_eq!(pochoir_result_status(handle), Status::BadArgument.code());
+        let detail = String::from_utf8(copy_out(handle)).expect("the payload is UTF-8");
+        assert_eq!(detail, "mark colour mode");
+        pochoir_result_free(handle);
+
+        pochoir_free(op, ol);
+        pochoir_free(tp, tl);
+        pochoir_free(ip, il);
     }
 
     #[test]

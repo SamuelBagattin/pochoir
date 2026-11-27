@@ -5,8 +5,11 @@ import {
   EngineFault,
   errorForStatus,
   STATUS,
+  warningsOf,
+  type MarkWarnings,
   type PochoirModule,
   type PreviewBitmap,
+  type RenderedDocument,
 } from './module';
 
 /**
@@ -52,6 +55,11 @@ export interface PochoirExports {
   pochoir_result_len(handle: number): number;
   pochoir_result_width(handle: number): number;
   pochoir_result_height(handle: number): number;
+  /**
+   * The warning bitmask: facts about a result the engine produced anyway.
+   * See `MarkWarnings`. Mask for the bits we know; a later engine may add one.
+   */
+  pochoir_result_warnings(handle: number): number;
   pochoir_result_free(handle: number): void;
 }
 
@@ -94,11 +102,10 @@ export class WasmModule implements PochoirModule {
     image: Uint8Array,
     text: string,
     options: MarkOptions,
-  ): Promise<Uint8Array> {
-    const out = await this.call(image, text, options, (ip, il, tp, tl, op, ol) =>
+  ): Promise<RenderedDocument> {
+    return this.call(image, text, options, (ip, il, tp, tl, op, ol) =>
       this.ex.pochoir_render_pdf(ip, il, tp, tl, op, ol),
-    );
-    return (out as { bytes: Uint8Array }).bytes;
+    ) as Promise<RenderedDocument>;
   }
 
   private async call(
@@ -113,7 +120,7 @@ export class WasmModule implements PochoirModule {
       optsPtr: number,
       optsLen: number,
     ) => number,
-  ): Promise<PreviewBitmap | { bytes: Uint8Array }> {
+  ): Promise<PreviewBitmap | RenderedDocument> {
     // Packed before the boundary is crossed, so that a rejected option is an
     // ordinary argument error and not mistaken for a fault.
     const packed = packOptions(options);
@@ -136,6 +143,10 @@ export class WasmModule implements PochoirModule {
       const len = this.ex.pochoir_result_len(handle);
       const width = this.ex.pochoir_result_width(handle);
       const height = this.ex.pochoir_result_height(handle);
+      // Read after the status, and only on a success: the engine reports 0
+      // here on every failure, and a caller that read it first would have
+      // nothing to attach the warning to anyway.
+      const warnings = this.warningsFor(handle);
 
       // A bitmap is discriminated from a document by its dimensions: a
       // finished PDF reports 0 x 0. Measured against the module, which returns
@@ -160,8 +171,8 @@ export class WasmModule implements PochoirModule {
       // it correct.
       const bytes = new Uint8Array(this.ex.memory.buffer, ptr, len).slice();
       return isBitmap
-        ? { pixels: new Uint8ClampedArray(bytes.buffer), width, height }
-        : { bytes };
+        ? { pixels: new Uint8ClampedArray(bytes.buffer), width, height, warnings }
+        : { bytes, warnings };
     } catch (error) {
       // An EngineError is a status that came back cleanly; anything else
       // thrown between here and the module is the module misbehaving.
@@ -180,6 +191,20 @@ export class WasmModule implements PochoirModule {
         /* the instance is already gone; the worker goes with it */
       }
     }
+  }
+
+  /**
+   * The warning bits, masked to the ones this build understands.
+   *
+   * An older engine that does not export this accessor is not a failure: the
+   * module is loaded from the same build as this bundle (ADR-0004 attests to
+   * exactly that), but a missing export must degrade to "no warnings" rather
+   * than throw a TypeError in the middle of a successful render and lose the
+   * document with it.
+   */
+  private warningsFor(handle: number): MarkWarnings {
+    const read = this.ex.pochoir_result_warnings;
+    return warningsOf(typeof read === 'function' ? read.call(this.ex, handle) : 0);
   }
 
   /**

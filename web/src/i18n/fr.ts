@@ -87,9 +87,20 @@ export const fr = {
     densityNormal: 'Normale',
     densityHigh: 'Forte',
     colour: 'Couleur',
-    colourHint: 'Un gris foncé survit à la photocopie et au noir et blanc.',
-    colourTooLight:
-      'Cette couleur est claire : le filigrane risque de disparaître à la photocopie ou en noir et blanc.',
+    /**
+     * The two colour modes. `Automatique` is the default and the one that
+     * protects somebody who never opens this control: ADR-0010 has the engine
+     * measure the page and choose the grey that shows on it, because a fixed
+     * dark grey is invisible on a dark-mode screenshot — and invisible without
+     * saying so, which is the worst thing this product can do.
+     */
+    colourAuto: 'Automatique',
+    colourCustom: 'Couleur choisie',
+    colourAutoHint:
+      'Pochoir mesure les tons de votre document et retient le gris, clair ou foncé, qui s’y voit le mieux.',
+    colourHint:
+      'Sur un document clair, un gris foncé survit à la photocopie et au noir et blanc. Sur un document sombre, c’est un gris clair qu’il faut.',
+    colourPickerLabel: 'Couleur du filigrane',
     reset: 'Rétablir les valeurs par défaut',
     degrees: '°',
     percent: '%',
@@ -122,6 +133,45 @@ export const fr = {
     downloadReady: (name: string) => `PDF prêt : ${name}`,
     cancel: 'Annuler',
     suffix: '-filigrane',
+  },
+
+  /**
+   * Warnings, not errors. The engine drew the mark and is telling us something
+   * about what it drew — ADR-0007 Decision 2 for the shrink, ADR-0010 for the
+   * contrast — and the document is there either way.
+   *
+   * They are here because the CLI prints both and the browser printed neither.
+   * A tool that warns in a terminal and stays silent in the interface lies by
+   * omission to the users who matter most: the ones who will never run a CLI,
+   * and who are about to send an identity document to somebody.
+   *
+   * Which contrast sentence applies is ours to decide, not the engine's: the
+   * warning is one bit, and we know whether we asked for a colour or asked it
+   * to choose. Hence two strings for one bit.
+   */
+  warnings: {
+    /**
+     * `poorContrast` on a request that asked for the automatic colour. The
+     * engine tried both candidates; neither covers this page, which means the
+     * page has light and dark regions. Not the user's mistake, and the
+     * sentence does not imply it is.
+     */
+    poorContrastAuto:
+      'Ce document mêle des zones claires et des zones sombres : aucune couleur unique ne se voit sur toute la page. Pochoir a retenu la meilleure des deux, mais une partie du document ne porte pas de filigrane visible. Augmentez l’opacité, ou acceptez que le filigrane ne couvre pas tout.',
+
+    /**
+     * `poorContrast` on a colour the user chose. Here there *is* a remedy and
+     * the sentence names all three, the first being the mode that measures.
+     */
+    poorContrastFixed:
+      'Cette couleur est proche des tons du document : le filigrane y est invisible sur une grande partie de la page. Repassez en « Automatique », choisissez une couleur plus contrastée, ou augmentez l’opacité.',
+
+    /**
+     * `shrunk`. ADR-0008's open question 4, finally answerable. Shown under
+     * the textarea, because that is the control that fixes it.
+     */
+    markShrunk:
+      'Le filigrane ne tenait pas à la taille demandée : il a été dessiné plus petit. Raccourcissez le texte, ou ajoutez un retour à la ligne.',
   },
 
   /**

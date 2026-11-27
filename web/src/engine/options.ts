@@ -7,7 +7,11 @@
  * invented at the keyboard; if you want to change one, change the ADR.
  */
 
-import { EngineError } from './module';
+// `./module.ts` with the extension, not `./module`: it costs nothing here —
+// Vite and `allowImportingTsExtensions` both take it — and it is what lets
+// `node web/test/options-wire.ts` run this module's packer directly, with no
+// bundler and no test framework. See that file.
+import { EngineError } from './module.ts';
 
 /**
  * ADR-0002 Decision 2 defines four modes. Only two of them have an engine:
@@ -23,6 +27,20 @@ import { EngineError } from './module';
 export type QualityMode = 'standard' | 'high';
 export type PageSizing = 'a4-max' | 'native';
 export type TileDensity = 'low' | 'normal' | 'high';
+
+/**
+ * Ask the engine to measure the page and choose the mark's colour itself.
+ *
+ * ADR-0010's default, and ours. The failure it exists for: a dark-mode
+ * screenshot watermarked in `#1a1a1a` at 0.30 opacity changes a pixel by
+ * `0.30 x |0.102 - 0.114|` = 0.004, which is one level of 255 and less than
+ * JPEG rounds away. The user gets their document back unmarked and believes
+ * it is protected.
+ */
+export const AUTOMATIC_COLOUR = 'auto';
+
+/** A colour for the mark: a fixed `#rrggbb`, or the engine's own choice. */
+export type MarkColour = typeof AUTOMATIC_COLOUR | `#${string}`;
 
 export interface MarkOptions {
   /** ADR-0002 Decision 2. `standard` is the default. */
@@ -43,8 +61,14 @@ export interface MarkOptions {
    */
   blurRatio: number;
   density: TileDensity;
-  /** `#rrggbb`. */
-  colour: string;
+  /**
+   * `#rrggbb`, or `'auto'` to have the engine choose from the page.
+   *
+   * An explicit colour is drawn exactly as asked, whatever the page looks
+   * like — and warned about when it has poor contrast against it, which is a
+   * fact only the engine can establish.
+   */
+  colour: MarkColour;
   /** Seeds the per-run position jitter so a run is reproducible (Decision 6). */
   seed: bigint;
 }
@@ -58,7 +82,11 @@ export const DEFAULT_OPTIONS: Readonly<MarkOptions> = Object.freeze({
   opacity: 0.3,
   blurRatio: 0.015,
   density: 'normal',
-  colour: '#1a1a1a',
+  // Not `#1a1a1a`. A default colour cannot be right for every page, and the
+  // one that was there is wrong for exactly the documents this audience
+  // photographs: a bank app, an insurance portal or an identity document held
+  // on a phone, screenshotted in dark mode.
+  colour: AUTOMATIC_COLOUR,
   seed: 0n,
 });
 
@@ -112,7 +140,7 @@ const DENSITY_CODES: Record<TileDensity, number> = { low: 0, normal: 1, high: 2 
  *  24  f32   opacity, 0..1
  *  28  f32   blur sigma, as a fraction of the font size (ADR-0007 D3)
  *  32  u32   tile density
- *  36  u32   colour, 0x00RRGGBB
+ *  36  u32   colour: 0x00RRGGBB, or 0x01000000 for 'choose from the page'
  *  40  u64   jitter seed
  */
 // Stays 1 through the ADR-0007 blur change: nothing has shipped, so there is
@@ -145,38 +173,63 @@ export function packOptions(o: MarkOptions): Uint8Array {
   v.setFloat32(24, o.opacity, true);
   v.setFloat32(28, o.blurRatio, true);
   v.setUint32(32, DENSITY_CODES[o.density], true);
-  v.setUint32(36, colourToU32(o.colour), true);
+  v.setUint32(36, colourWord(o.colour), true);
   v.setBigUint64(40, o.seed, true);
   return new Uint8Array(buf);
 }
 
-export function colourToU32(hex: string): number {
-  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
-  const n = m ? parseInt(m[1]!, 16) : 0x1a1a1a;
-  return n >>> 0;
+/** Top byte of offset 36 when the low 24 bits are the colour. */
+export const COLOUR_MODE_FIXED = 0x00;
+/** Top byte of offset 36 when the engine is to choose the colour. */
+export const COLOUR_MODE_AUTOMATIC = 0x01;
+/** The whole word that asks for the automatic choice. */
+export const AUTOMATIC_COLOUR_WORD = COLOUR_MODE_AUTOMATIC * 0x01_00_00_00;
+
+/**
+ * Offset 36, packed.
+ *
+ * The top byte of this field was padding the engine ignored until ADR-0010
+ * gave it a colour it can choose itself; it is now a mode byte, and the only
+ * two words the engine accepts are `0x00RRGGBB` and `0x01000000`. Both sides
+ * have to agree about that or the failure is silent and ugly — a misread
+ * colour byte is a wrong-coloured mark, not an error — so the engine refuses
+ * everything else, including `0x01RRGGBB`, which sets the automatic flag and
+ * sends a colour and so means two things at once. `web/test/options-wire.ts`
+ * pins what this function emits; `colour_of` in
+ * `crates/pochoir-wasm/src/options.rs` pins what the engine accepts.
+ *
+ * An unparseable colour throws rather than falling back to a default, which is
+ * what the old `colourToU32` did. A silent fallback is how a colour the user
+ * chose becomes a different colour in their document with nothing said.
+ */
+export function colourWord(colour: MarkColour): number {
+  if (colour === AUTOMATIC_COLOUR) return AUTOMATIC_COLOUR_WORD;
+  const match = /^#([0-9a-f]{6})$/i.exec(colour.trim());
+  if (!match) {
+    throw new EngineError(
+      'argument',
+      `colour must be #rrggbb or '${AUTOMATIC_COLOUR}', got ${JSON.stringify(colour)}`,
+    );
+  }
+  // Six hex digits cannot exceed 0xffffff, so the mode byte is zero by
+  // construction rather than by masking.
+  return parseInt(match[1]!, 16) >>> 0;
 }
 
-export function rgbOf(hex: string): [number, number, number] {
-  const n = colourToU32(hex);
+/** The three channels of a fixed colour. Not defined for `'auto'`. */
+export function rgbOf(hex: `#${string}`): [number, number, number] {
+  const n = colourWord(hex);
   return [(n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff];
 }
 
-/**
- * WCAG relative luminance, so we can honour ADR-0002's rule that we "warn when
- * the chosen colour's luminance is too high". A pale mark vanishes under
- * photocopying, which is the attacker's cheapest next move.
- */
-export function relativeLuminance(hex: string): number {
-  const channel = (c: number) => {
-    const s = c / 255;
-    return s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
-  };
-  const [r, g, b] = rgbOf(hex);
-  return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
-}
-
-/** Above this the mark is too light to survive greyscale reproduction. */
-export const LUMINANCE_WARN_ABOVE = 0.35;
+// `relativeLuminance` and `LUMINANCE_WARN_ABOVE` were here, behind a warning
+// that a mark above luminance 0.35 would not survive a photocopy. They are
+// gone, with the engine's `colour_is_too_pale` that they mirrored: ADR-0010
+// found that a one-sided test of a colour in the abstract is not a test about
+// contrast at all, and it would now fire on `#e5e5e5` — the colour the engine
+// itself chooses for a dark page, and the right one there. Whether a mark can
+// be seen is a question about a particular page, and only the engine has the
+// page. It answers it in the warning bits on the result.
 
 /**
  * Clamp and trim the mark text to what the engine will accept.
