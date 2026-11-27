@@ -868,6 +868,51 @@ correctly tell the user it is our fault. The fix is not to make the call. Second
 briefed with it: the message advises reloading, and reloading cannot help — advice that cannot
 work is worse than vague advice.
 
+## Safari was broken, and finding out why found something worse (`f586c3a`), 2026-11-27
+
+Samuel opened the live site in Safari: static HTML rendered, the island never mounted, an empty
+band where the application should be. **Not normal, and ours.**
+
+**Cause:** `Integrity-Policy: blocked-destinations=(script)`. Safari 26 enforces the header but
+does not credit a `<link rel="modulepreload">`'s `integrity` to the import it covers, so every
+imported chunk was refused. Chrome and Firefox credit it. Safari 18.4–18.6 ignored the header
+entirely. Now `Integrity-Policy-Report-Only`, which keeps the violation signal and blocks nothing.
+What is given up is the refusal of a script arriving with **no** integrity metadata at all; the
+SRI attributes themselves stay.
+
+**Why nobody caught it:** every check any of us ran — mine and three sessions' — was in a Chromium
+engine, where the header behaves as specified. `make check` can assert a great deal about the
+bytes we ship and nothing about how another engine treats a security header. `docs/DEPLOY.md`
+listed "a first deploy checked in all three engines" as a prerequisite and I did not do it.
+
+### The worse finding, which I reproduced myself rather than accepting
+
+The session went to verify my diagnosis and found that **the `modulepreload` integrity is inert in
+Firefox too**. I tampered with a real chunk in a real build and served it with the production
+headers:
+
+| engine | tampered chunk | tampered entry script |
+| --- | --- | --- |
+| Chromium 156 | **blocked**, explicit SRI error, island does not mount | blocked |
+| Firefox 160 | **executed**, island mounts normally | **blocked**, does not run |
+
+So the boundary is precise: **`integrity` on the `<script>` element is enforced in Gecko;
+`integrity` supplied through `<link rel="modulepreload">` for the chunk that script imports is
+not.** Our attestation covers less than ADR-0004 claimed in two of three engines. ADR-0004 now
+carries the engine table and the measurements instead of implying uniform coverage.
+
+This is the second item in that ADR's ceiling we wanted and cannot have, after the Web Worker
+script, which `new Worker(url)` gives no integrity option for at all.
+
+### Verified on the live site after deploying
+
+Gecko had never been tested at all. Headless Firefox 160 against the live origin: island mounts,
+a PNG loads, the `Location` preset applies, the preview renders, status reads *Aperçu à jour*, and
+**the export produces 74 305 bytes beginning `%PDF-`** — the whole Rust/WebAssembly path working
+in an engine nobody had run it in. Chromium unchanged.
+
+Safari itself I cannot drive; Samuel confirms that one.
+
 ## Reserved numbers
 
 - ADR-0001 stack and dependency policy — `adr-design`, merged, `Proposed`
