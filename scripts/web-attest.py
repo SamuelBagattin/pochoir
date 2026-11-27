@@ -398,8 +398,9 @@ def build_manifest(repo: Path, dist: Path, engine: Path | None) -> dict:
             "rustc": _tool_version("rustc", "--version"),
             "rustflags": None,
         },
-        # ADR-0004 Decisions 1 and 2. Filled in when crates/pochoir-wasm
-        # produces a module; see docs/DEPLOY.md for the exact wiring.
+        # ADR-0004 Decisions 1 and 2. Null when no module was placed in this
+        # build, which `make web-build` alone does not do; `make web-site`
+        # does. See docs/DEPLOY.md.
         "engine": None,
     }
 
@@ -646,7 +647,19 @@ def main(argv: list[str]) -> int:
         print(f"web-attest: {len(manifest['files'])} file(s) -> {manifest_path}")
         print(f"web-attest: files_digest {manifest['files_digest']}")
         if manifest["engine"] is None:
-            print("web-attest: engine: none yet (crates/pochoir-wasm has not landed)")
+            # Says what the condition actually detects. The engine exists —
+            # `crates/pochoir-wasm` is real and `make wasm` builds it — so the
+            # only thing missing is a module placed in THIS build, which is the
+            # normal state of a plain `pnpm build` or `make web-build`. The
+            # previous wording claimed the crate had not landed, which stopped
+            # being true and is the one kind of mistake this tool must not
+            # make: it is build output about the state of what it attests, and
+            # a reader will believe it.
+            print(
+                "web-attest: engine: none in this build — run "
+                "`make web-engine ENGINE=…` before building, or `make web-site` "
+                "to do both. A deploy is gated on it by --require-engine."
+            )
     else:
         print(manifest["files_digest"])
     return 0
