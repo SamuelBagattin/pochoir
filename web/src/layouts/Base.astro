@@ -7,7 +7,8 @@ import { t } from '../i18n';
 interface Props {
   title: string;
   description: string;
-  current: 'tool' | 'privacy';
+  /** Which nav item is the current page, or 'none' for a page not in the nav. */
+  current: 'tool' | 'privacy' | 'none';
 }
 
 const { title, description, current } = Astro.props;

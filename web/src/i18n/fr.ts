@@ -205,6 +205,14 @@ export const fr = {
     generic: 'Le calcul a échoué.',
   },
 
+  notFound: {
+    title: 'Cette page n’existe pas',
+    description: 'La page demandée n’existe pas sur Pochoir.',
+    lede:
+      'L’adresse que vous avez suivie ne correspond à aucune page de Pochoir. Elle a peut-être été mal saisie, ou le lien que vous avez suivi est ancien.',
+    backToTool: 'Filigraner un document',
+  },
+
   privacy: {
     title: 'Ce qui reste sur votre appareil',
     lede:
