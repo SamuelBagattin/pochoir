@@ -744,6 +744,53 @@ the most privacy-critical script in the product is the one SRI cannot pin. Only 
 rebuild would detect a swap. That belongs in ADR-0004's ceiling section, and it is a genuine
 limitation to state publicly rather than to discover later.
 
+## Pre-deploy tidy-up, 2026-11-27 — the 404 page and three tooling fixes
+
+**The French 404 page, merged `dba60d1`.** Not cosmetic: an assets-only Cloudflare deployment
+uploads a no-op Worker for unmatched paths, and Cloudflare does not apply `_headers` to
+Worker-generated responses — so the one response on the whole site that escaped both our header
+policy and our language was the not-found page. `404.astro` plus `"not_found_handling":
+"404-page"` puts it back inside the asset router. Verified from a clean checkout of the ref:
+3 pages built, attested like any other, all three security headers, no console error under the
+real CSP, correct French typography.
+
+The session **stated what it could not verify** — that the uploaded Worker actually defers to the
+asset router follows from Cloudflare's documented rule and the artefact wrangler emits, and is not
+an observation. That caveat lives in `wrangler.jsonc`. **Checking the headers on an unknown path
+is the first thing to do on the live deploy.**
+
+**Three tooling fixes, merged `55b7630`**, two of which the sessions reported against themselves:
+
+1. `web-attest` claimed `engine: none yet (crates/pochoir-wasm has not landed)` — false since
+   `25d31b0`. It now reports what it actually detects: no engine *in this build*, with a pointer
+   to `make web-engine`. Build output about the integrity of what we ship is the last place a
+   stale claim belongs.
+2. `web-serve` now emulates `not_found_handling` from `wrangler.jsonc`. Reproduced after merging:
+   an unmatched path returns **404, all three security headers, and the French page**. Before
+   this, the local server under-reported production behaviour on exactly the path we had just
+   fixed, so the only check would have been a live deploy.
+3. `verify-live` now fails a live 404 that is missing its security headers — the check for the
+   one thing nobody can verify without a real deployment.
+
+### Where the deploy stands
+
+Everything on our side is ready and `make web-deploy-check` passes. Blocked solely on Samuel:
+a Cloudflare account, `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` as repository secrets
+(token scoped to *Account → Workers Scripts → Edit*, never a Global API Key), and a `production`
+GitHub environment. I checked: the repo has no secrets, no variables and no environments.
+No domain — `pochoir.app` stays unregistered on his instruction, so the first deploy lands on
+`pochoir.<subdomain>.workers.dev`.
+
+**AuthProxy: Samuel chose pre-launch gating**, not permanent sign-in. The reasoning matters and
+should survive into whoever picks this up: permanent sign-in would add an account requirement the
+government tool does not have, create an access log of who watermarks identity documents, and put
+a third party inside the path ADR-0004's attestation is meant to cover. **The gate comes off
+before public launch** — it is a temporary measure on an unfinished site, and leaving it up would
+quietly falsify the privacy page. His orgs: `sb-tech-consulting` (pro), `coucou`, `test`.
+
+**Rotation:** `deploy-plumbing` is at 358k and `web-ui` at 518k. Both are past the mark. The next
+task in either lane goes to a fresh session from a handover note.
+
 ## Reserved numbers
 
 - ADR-0001 stack and dependency policy — `adr-design`, merged, `Proposed`
