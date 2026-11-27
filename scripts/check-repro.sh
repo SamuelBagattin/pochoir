@@ -1,6 +1,20 @@
-#!/bin/sh
+#!/usr/bin/env bash
 #
 # Reproducibility check for the wasm artefact. Run by `make wasm-repro`.
+#
+# bash, not sh, and deliberately: the copy step below reads NUL-delimited
+# filenames with `read -d ''`, which POSIX does not define. It was `#!/bin/sh`
+# and it worked on every Mac, because macOS `/bin/sh` is bash 3.2 in sh mode
+# and accepts `-d` anyway. On `ubuntu-latest` `/bin/sh` is dash, `read -d`
+# failed, the copy loop produced an empty tree, and the build died with
+# "No rule to make target 'wasm'" — a message pointing nowhere near the cause.
+# Found by the first real deploy.
+#
+# The alternative was keeping `#!/bin/sh` and dropping the NUL delimiter, and
+# that would have been the wrong trade: `git ls-files -z` was chosen so that a
+# filename containing a newline cannot split into two, and swapping a
+# portability bug for a correctness one is not a fix. Compare
+# `check-deps.sh`, which is POSIX because it has no reason not to be.
 #
 # ADR-0004 Decision 1 claims that a pinned toolchain plus two `RUSTFLAGS`
 # entries is enough to make the browser module byte-reproducible, with no
@@ -55,6 +69,7 @@ echo "check-repro: copying the working tree to two paths under $WORK"
 # together are what the developer is actually building. `git archive` of HEAD
 # would miss uncommitted work, and a plain `cp -R` would drag `target/` along
 # and defeat the point of building from clean.
+# `read -d ''` is why this script is bash; see the shebang comment.
 git ls-files -z --cached --others --exclude-standard | while IFS= read -r -d '' file; do
 	[ -f "$file" ] || continue
 	for dest in "$ONE" "$TWO"; do
