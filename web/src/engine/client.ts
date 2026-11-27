@@ -1,4 +1,4 @@
-import type { PreviewBitmap } from './module';
+import type { PreviewBitmap, RenderedDocument } from './module';
 import type { MarkOptions } from './options';
 import type { Failure, Request, Response } from './protocol';
 
@@ -101,14 +101,15 @@ export class EngineClient {
       pixels: new Uint8ClampedArray(reply.pixels),
       width: reply.width,
       height: reply.height,
+      warnings: reply.warnings,
     };
   }
 
-  async pdf(text: string, options: MarkOptions): Promise<Uint8Array> {
+  async pdf(text: string, options: MarkOptions): Promise<RenderedDocument> {
     await this.#ensureUploaded();
     const reply = await this.#send({ kind: 'pdf', text, options }, this.#pdfTimeout);
     if (!reply.ok || reply.kind !== 'pdf') throw failureOf(reply);
-    return new Uint8Array(reply.bytes);
+    return { bytes: new Uint8Array(reply.bytes), warnings: reply.warnings };
   }
 
   /** Kill the worker and reject everything in flight. Safe to call at any time. */

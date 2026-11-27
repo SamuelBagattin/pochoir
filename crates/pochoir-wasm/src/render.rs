@@ -5,11 +5,42 @@
 //! them. [`crate::abi`] is then only marshalling.
 
 use pochoir_core::page::PageSource;
-use pochoir_core::{ImagePage, Pixmap, image, image_to_pdf, mark};
+use pochoir_core::{ImagePage, Pixmap, image, image_to_pdf_observed, mark};
 
 use crate::options::{self, Request};
 use crate::scale;
 use crate::status::{Failure, Status};
+
+/// Bit 0 of the warning mask: the mark had to be drawn markedly smaller than
+/// asked for. [`mark::Composition::was_shrunk_noticeably`], ADR-0007
+/// Decision 2.
+pub const WARNING_MARK_SHRUNK: u32 = 1 << 0;
+
+/// Bit 1 of the warning mask: the mark is invisible over too much of the page.
+/// [`mark::Composition::has_poor_contrast`], ADR-0010.
+pub const WARNING_POOR_CONTRAST: u32 = 1 << 1;
+
+/// Every bit this build can set. A caller must ignore the rest rather than
+/// treat an unknown bit as an error, so that a later engine can add one.
+pub const WARNINGS_KNOWN: u32 = WARNING_MARK_SHRUNK | WARNING_POOR_CONTRAST;
+
+/// The warning bits for a finished composition.
+///
+/// A warning is not a failure: ADR-0007 Decision 2 draws and tells the caller,
+/// and ADR-0010 keeps that posture for the colour. Both facts are things the
+/// compositor knows and the pixels do not show, which is why they need a
+/// channel of their own rather than being left for the caller to measure.
+#[must_use]
+fn warnings_of(composition: &mark::Composition) -> u32 {
+    let mut bits = 0;
+    if composition.was_shrunk_noticeably() {
+        bits |= WARNING_MARK_SHRUNK;
+    }
+    if composition.has_poor_contrast() {
+        bits |= WARNING_POOR_CONTRAST;
+    }
+    bits
+}
 
 /// What a render produced.
 ///
@@ -25,6 +56,10 @@ use crate::status::{Failure, Status};
 ///    pins it across every input the tests reach.
 /// 2. **On failure, `bytes` is the detail payload**, not output: the structured
 ///    data described on [`Failure`], or empty where there is nothing to name.
+/// 3. **`warnings` is zero on every failure.** A warning describes a document
+///    that exists; there is no document to warn about when the status is not
+///    `OK`, and a caller that read a bit there would report two different
+///    things about one render.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Outcome {
     /// Zero on success.
@@ -36,6 +71,11 @@ pub struct Outcome {
     pub width: u32,
     /// Bitmap height, or `0` for a PDF and `0` on failure.
     pub height: u32,
+    /// [`WARNING_MARK_SHRUNK`] and [`WARNING_POOR_CONTRAST`], or `0`.
+    ///
+    /// The success-side channel the ABI had no room for: see
+    /// `pochoir_result_warnings`.
+    pub warnings: u32,
 }
 
 impl Outcome {
@@ -47,6 +87,7 @@ impl Outcome {
             bytes: failure.detail.into_bytes(),
             width: 0,
             height: 0,
+            warnings: 0,
         }
     }
 
@@ -58,23 +99,25 @@ impl Outcome {
 
     /// A finished document: bytes, and both dimensions zero by construction.
     #[must_use]
-    pub const fn document(bytes: Vec<u8>) -> Self {
+    pub const fn document(bytes: Vec<u8>, warnings: u32) -> Self {
         Self {
             status: Status::Ok,
             bytes,
             width: 0,
             height: 0,
+            warnings,
         }
     }
 
     /// A finished bitmap.
     #[must_use]
-    pub const fn bitmap(bytes: Vec<u8>, width: u32, height: u32) -> Self {
+    pub const fn bitmap(bytes: Vec<u8>, width: u32, height: u32, warnings: u32) -> Self {
         Self {
             status: Status::Ok,
             bytes,
             width,
             height,
+            warnings,
         }
     }
 }
@@ -86,8 +129,18 @@ pub fn render_pdf(image_bytes: &[u8], text: &str, packed_options: &[u8]) -> Outc
         Ok(request) => request,
         Err(failure) => return Outcome::failed(failure),
     };
-    match image_to_pdf(image_bytes, &request.options) {
-        Ok(pdf) => Outcome::document(pdf),
+    // `image_to_pdf_observed` rather than `image_to_pdf`: the observer is the
+    // only place the `Composition` exists, and it is what the CLI reads to
+    // print the same two warnings. One page today, so the first composition
+    // is the only one; `|=` rather than `=` so a multi-page write path would
+    // report the union rather than the last page's.
+    let mut warnings = 0;
+    match image_to_pdf_observed(image_bytes, &request.options, |_, _, composition| {
+        if let Some(composition) = composition {
+            warnings |= warnings_of(composition);
+        }
+    }) {
+        Ok(pdf) => Outcome::document(pdf, warnings),
         Err(error) => Outcome::failed(Failure::for_error(&error, text)),
     }
 }
@@ -157,8 +210,20 @@ fn preview(request: &Request, image_bytes: &[u8], max_px: u32) -> pochoir_core::
         scale::downscale(&full, width, height)?
     };
 
-    mark::compose(&mut canvas, mark, seed, request.options.jitter)?;
-    Ok(Outcome::bitmap(canvas.into_data(), width, height))
+    // The preview warns about what the preview shows. Both warnings are
+    // measured from the page the mark went onto, and here that is the
+    // downscaled bitmap rather than the full-resolution page — a difference
+    // that matters in principle and not in practice: the box average
+    // preserves the page's tone, and the shrink is keyed to ratios of the
+    // page. Measured on the fixtures below, the preview and the document
+    // agree on both bits.
+    let composition = mark::compose(&mut canvas, mark, seed, request.options.jitter)?;
+    Ok(Outcome::bitmap(
+        canvas.into_data(),
+        width,
+        height,
+        warnings_of(&composition),
+    ))
 }
 
 #[cfg(test)]
@@ -171,6 +236,10 @@ mod tests {
 
     /// The browser client's defaults, packed. Duplicated from the options tests
     /// on purpose: a shared helper would let a packing mistake pass both.
+    ///
+    /// Offset 36 carries ADR-0010's automatic word, because that is what the
+    /// browser now sends and these tests exist to exercise the request the
+    /// product actually makes.
     fn packed(mode: u32, seed: u64) -> Vec<u8> {
         let mut b = Vec::with_capacity(OPTIONS_BYTES);
         b.extend_from_slice(&1_u32.to_le_bytes());
@@ -182,7 +251,7 @@ mod tests {
         b.extend_from_slice(&0.30_f32.to_le_bytes());
         b.extend_from_slice(&0.015_f32.to_le_bytes());
         b.extend_from_slice(&1_u32.to_le_bytes());
-        b.extend_from_slice(&0x001A_1A1A_u32.to_le_bytes());
+        b.extend_from_slice(&crate::options::AUTOMATIC_COLOUR_WORD.to_le_bytes());
         b.extend_from_slice(&seed.to_le_bytes());
         b
     }

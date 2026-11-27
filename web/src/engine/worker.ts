@@ -99,13 +99,20 @@ async function handle(request: Request): Promise<Response> {
         pixels: bitmap.pixels.buffer as ArrayBuffer,
         width: bitmap.width,
         height: bitmap.height,
+        warnings: bitmap.warnings,
       };
     }
     case 'pdf': {
       const bytes = requireImage();
       const module = await engine();
       const pdf = await module.renderPdf(bytes, request.text, request.options);
-      return { id: request.id, ok: true, kind: 'pdf', bytes: pdf.buffer as ArrayBuffer };
+      return {
+        id: request.id,
+        ok: true,
+        kind: 'pdf',
+        bytes: pdf.bytes.buffer as ArrayBuffer,
+        warnings: pdf.warnings,
+      };
     }
   }
 }

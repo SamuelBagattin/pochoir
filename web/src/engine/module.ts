@@ -22,13 +22,79 @@ export interface PochoirModule {
   ): Promise<PreviewBitmap>;
 
   /** Render the final document. */
-  renderPdf(image: Uint8Array, text: string, options: MarkOptions): Promise<Uint8Array>;
+  renderPdf(
+    image: Uint8Array,
+    text: string,
+    options: MarkOptions,
+  ): Promise<RenderedDocument>;
 }
 
 export interface PreviewBitmap {
   pixels: Uint8ClampedArray;
   width: number;
   height: number;
+  warnings: MarkWarnings;
+}
+
+export interface RenderedDocument {
+  bytes: Uint8Array;
+  warnings: MarkWarnings;
+}
+
+/**
+ * What the engine says about a result it produced anyway.
+ *
+ * Neither of these is a failure: ADR-0007 Decision 2 and ADR-0010 both draw
+ * the mark and tell the caller rather than refusing, because refusing on a
+ * document that can be marked imperfectly is worse than marking it and saying
+ * so. They arrive over the ABI as a bitmask on the result header, read through
+ * `pochoir_result_warnings`.
+ *
+ * **The browser must show them.** The CLI prints both; a browser that stays
+ * silent where the terminal warns lies by omission to the users who matter
+ * most — the ones who are not going to run a CLI.
+ */
+export interface MarkWarnings {
+  /**
+   * The mark text did not fit at the size asked for and was drawn markedly
+   * smaller. ADR-0007 Decision 2.
+   */
+  shrunk: boolean;
+  /**
+   * The mark is invisible over more than a tenth of the page. ADR-0010.
+   *
+   * Which sentence this deserves depends on what was asked for, and the
+   * caller knows that without being told: with `colour: 'auto'` it means the
+   * page defeats both candidates, because it has light and dark regions and
+   * no single colour contrasts with all of it; with a fixed colour it means
+   * that colour is close to the page's own tone. That is why the wire carries
+   * one bit and not a structure.
+   */
+  poorContrast: boolean;
+}
+
+/** The warning bits of the result header. Mask before reading. */
+export const WARNING = {
+  /** ADR-0007 Decision 2. */
+  MARK_SHRUNK: 1 << 0,
+  /** ADR-0010. */
+  POOR_CONTRAST: 1 << 1,
+} as const;
+
+export const NO_WARNINGS: MarkWarnings = { shrunk: false, poorContrast: false };
+
+/**
+ * Decode the warning mask.
+ *
+ * Unknown bits are ignored rather than treated as an error, so that a later
+ * engine can add one without this build reporting a failure on a document it
+ * rendered perfectly well.
+ */
+export function warningsOf(mask: number): MarkWarnings {
+  return {
+    shrunk: (mask & WARNING.MARK_SHRUNK) !== 0,
+    poorContrast: (mask & WARNING.POOR_CONTRAST) !== 0,
+  };
 }
 
 /** The status codes the ABI's result header can carry. 0 is success. */
