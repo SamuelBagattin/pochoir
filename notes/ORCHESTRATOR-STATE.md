@@ -913,6 +913,54 @@ in an engine nobody had run it in. Chromium unchanged.
 
 Safari itself I cannot drive; Samuel confirms that one.
 
+## The silent failure is closed, end to end (`022fc15`), 2026-11-27
+
+Samuel's dark-mode screenshot found the worst bug this product can have: a mark that is not
+there, with no warning. It is fixed in the engine, on the wire, and in the browser, and
+**measured on the live site** rather than asserted.
+
+| page | before | after |
+| --- | --- | --- |
+| near-black (luminance 0.043) | 0.34% of the preview differs from the background | **4.95%** |
+| near-white (luminance 0.961) | — | **4.52%** |
+
+Those two being almost equal is the point: the same glyph strokes, opposite polarity, so the
+automatic choice flips with the page. Confirmed by eye in both directions, and the engine's own
+measure on Samuel's screenshot went 6% → 98% visible.
+
+**What it took, in three merges.** `b3231ed` gave the engine `PageTone::measure`, a 256-bin
+luminance histogram, `MarkColour::{Automatic, Fixed}` and `has_poor_contrast`, with ADR-0010
+superseding ADR-0002's colour row. That changed nothing a user could see. `022fc15` was the half
+that reaches people: offset 36's previously-ignored top byte became a mode byte, and a new
+`pochoir_result_warnings` accessor answers **ADR-0008 open question 4** — one channel carrying
+both the contrast warning and ADR-0007's shrink warning, rather than the two being solved
+separately. Before it, `Status` was failure-only and the terminal warned where the browser
+stayed silent.
+
+**The lesson worth keeping:** a fix in the engine is not a fix in the product. I only knew the
+first merge changed nothing for users because I loaded a dark page into the deployed site and
+sampled the canvas. The session flagged the same thing in its report, independently.
+
+### The verify-live fix proved itself in production
+
+`cff2d90` made the post-deploy check retry propagation for up to 120s while still failing on
+pass 1 — 0.0s — for a wrong byte at a content-addressed path, where a mismatch can never be
+propagation. I reproduced all three behaviours locally before merging, and my first attempt
+appeared to disprove the claim until I noticed I had tampered with `index.html`, which is *not*
+content-addressed and where a wrong byte is exactly what a stale version looks like. The
+distinction is the substance of the change. The next real deploy, run 46007129626, passed its
+verify step where the previous one had failed spuriously.
+
+### The permission classifier, resolved
+
+Three sessions were blocked today by `git commit` refusals; the pattern was commit-message
+*form*, not commits. Samuel asked me to fix it at the root, so `.claude/settings.local.json` now
+allows `Bash(git commit:*)` and `Bash(git add:*)` beside the `Bash(git push *)` that was already
+there. Narrow on purpose: no force-push rule, no blanket git allow — `--amend` plus a forced push
+is the destructive pair, and pushing was already permitted. **I never told a session to shorten
+its commit message to get past the check**, and that was right: the message for the contrast fix
+is the clearest explanation we have of why the bug existed.
+
 ## Reserved numbers
 
 - ADR-0001 stack and dependency policy — `adr-design`, merged, `Proposed`
