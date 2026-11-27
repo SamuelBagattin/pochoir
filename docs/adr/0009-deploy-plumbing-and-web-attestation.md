@@ -179,9 +179,12 @@ Two separate findings, and the second is the worse one.
 import it covers.** The last row is the proof: a chunk altered so that its
 bytes no longer match the hash on its own `modulepreload` link was fetched and
 executed without complaint. Chromium blocks exactly that case — row 3 of the
-table above. So the workaround at the heart of this decision raises coverage
-from 28.7% to 93.5% in Chromium and leaves it at **28.7% in Safari**. The
-central claim of Decision 5 is engine-specific and was not written that way.
+table above. **Firefox 160.0.1 runs the tampered chunk too**, and does not
+enforce `Integrity-Policy` at all, so the enforcing header was never doing any
+work there either. The workaround at the heart of this decision therefore
+raises coverage from 28.7% to 93.5% **in Chromium only**, and leaves it at
+28.7% in both other engines. The central claim of Decision 5 is
+engine-specific and was not written that way.
 
 **And that is why the enforcing header could not ship.** Rows 1 and 4 together
 say what WebKit is actually doing: it enforces `blocked-destinations=(script)`
@@ -214,9 +217,9 @@ measured this.
 
 ### The things still unattested, named rather than glossed
 
-- **`_pochoir/index-client.*.js`, 50 313 bytes, in WebKit only.** Attested in
-  the build and enforced by Chromium; not checked at all by Safari, for the
-  reason measured above. Added to this list 2026-11-27.
+- **`_pochoir/index-client.*.js`, 50 313 bytes, outside Chromium.** Attested
+  in the build and enforced by Chromium; not checked at all by Safari or
+  Firefox, for the reason measured above. Added to this list 2026-11-27.
 - **`_pochoir/worker-*.js`, 4 909 bytes.** `new Worker(url)` has no integrity
   option, and the request's destination is `worker`, not `script`, so
   `Integrity-Policy` does not reach it either — measured: the worker loads

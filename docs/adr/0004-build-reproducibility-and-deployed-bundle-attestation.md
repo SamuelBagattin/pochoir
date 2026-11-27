@@ -646,11 +646,11 @@ deploy measured it.
    given as bytes. The main thread executes 70 548 bytes of JavaScript across
    two files and the Web Worker a further 4 909.
 
-   | File | Bytes | Chromium | WebKit / Safari |
-   | --- | --- | --- | --- |
-   | `index.astro_…js`, the entry | 20 235 | enforced, `integrity` attribute | enforced, `integrity` attribute |
-   | `index-client.*.js`, imported by it | 50 313 | enforced, via `modulepreload` | **not checked** |
-   | `worker-*.js` | 4 909 | **not checked** | **not checked** |
+   | File | Bytes | Chromium | WebKit / Safari | Gecko / Firefox |
+   | --- | --- | --- | --- | --- |
+   | `index.astro_…js`, the entry | 20 235 | enforced, `integrity` attribute | enforced, `integrity` attribute | enforced, `integrity` attribute |
+   | `index-client.*.js`, imported by it | 50 313 | enforced, via `modulepreload` | **not checked** | **not checked** |
+   | `worker-*.js` | 4 909 | **not checked** | **not checked** | **not checked** |
 
    The worker is a limit of the platform and always was: `new Worker(url)` has
    no integrity option, and the request's destination is `worker`, not
@@ -664,12 +664,16 @@ deploy measured it.
    Chromium credits to the import. **Measured 2026-11-27 in Mobile Safari on
    iOS 26.5: WebKit does not. A chunk whose bytes were altered so that they no
    longer match the hash on its `modulepreload` link was fetched and executed,
-   and the page mounted normally.** So in Safari the enforced share of the main
-   thread is 20 235 of 70 548 bytes — 28.7% — which is exactly the figure
-   ADR-0009 Decision 5 believed it had fixed.
+   and the page mounted normally.** **Firefox 160.0.1 runs the tampered chunk
+   too.** So outside Chromium the enforced share of the main thread is 20 235
+   of 70 548 bytes — 28.7% — which is exactly the figure ADR-0009 Decision 5
+   believed it had fixed, and it was fixed in one engine of three.
 
    Worse, the same gap made the enforcing form of `Integrity-Policy`
-   unshippable. WebKit *does* enforce `blocked-destinations=(script)`, and it
+   unshippable — in the one engine that enforces it at all. Firefox does not:
+   the enforcing header neither blocks the chunk nor breaks the page there,
+   which matches MDN's "reporting partial" for Gecko. WebKit *does* enforce
+   `blocked-destinations=(script)`, and it
    *does* honour an `integrity` attribute on a `<script>` the HTML names — a
    build with that attribute deleted is refused there. What it will not do is
    accept a `modulepreload` link as the metadata for the import it covers, so
@@ -679,11 +683,12 @@ deploy measured it.
    now ships as `Integrity-Policy-Report-Only`; `web/public/_headers` carries
    the measurement and the condition for restoring it.
 
-   The honest statement to a reader is therefore narrower than Decision 2's:
-   *in Chromium the browser refuses 93.5% of the JavaScript we ship if its
-   bytes do not match; in Safari, 26.8%; the Web Worker is covered in neither,
-   and for all of it the manifest and an independent rebuild are the only
-   check.* Both engines still enforce `fetch` integrity on the wasm engine
+   The honest statement to a reader is therefore much narrower than Decision
+   2's: *in Chromium the browser refuses 93.5% of the JavaScript we ship if its
+   bytes do not match; in Safari and Firefox, 26.8%; the Web Worker is covered
+   in none of the three, and for all of it the manifest and an independent
+   rebuild are the only check.* One engine of three does what Decision 2
+   assumed all of them did. Both engines still enforce `fetch` integrity on the wasm engine
    itself, which is the largest single artefact and the one Decision 2 was
    mainly about.
 
@@ -1042,10 +1047,11 @@ minified-but-unmapped output, which ADR-0001 had already ruled out.
   Safari entry turned out to be the more important problem. The compat table
   was right that the header exists there and wrong, by omission, about whether
   it is usable — see the ceiling, point 4. Firefox is still unmeasured by us.)*
-- **Firefox.** Everything in the ceiling's point 4 is measured in Chromium and
-  in WebKit only. Whether Gecko credits a `modulepreload` link's `integrity` to
-  the import it covers has not been tested, and should be before anyone quotes
-  the 93.5% figure as applying to it.
+- ~~**Firefox.**~~ Measured on 2026-11-27, Firefox 160.0.1: it does not credit
+  a `modulepreload` link's `integrity` to the import, and does not enforce
+  `Integrity-Policy` at all. Folded into the ceiling's point 4. What remains
+  untested is every engine older than the three measured, and any mobile
+  browser that is not WebKit.
 
 ## References
 

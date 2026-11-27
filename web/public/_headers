@@ -61,6 +61,11 @@
 # and the policy refuses it. Chromium credits the preload and runs the page.
 # WebKit bug 326340.
 #
+# Firefox 160.0.1, measured the same way: the enforcing header does not block
+# anything there either, and a tampered chunk also runs. Gecko neither enforces
+# `blocked-destinations=(script)` nor checks a `modulepreload` link's hash. So
+# the enforcing form was only ever doing work in Chromium.
+#
 # Enforcing this header therefore costs us every Safari user — on a French site
 # about photographing identity documents, most of the mobile audience — to gain
 # a defence in depth that only Chromium applies. Report-only keeps the
