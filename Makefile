@@ -145,9 +145,18 @@ web-deploy: web-site ## Publish to Cloudflare. Needs credentials this repo does 
 	}
 	cd web && $(WRANGLER) deploy
 
+# Optional, and the one argument this target gained. `verify-live.py` compares
+# the whole manifest, retries from scratch while the findings look like
+# Cloudflare deployment propagation, and gives up after this many seconds. Its
+# own default is 120; pass DEADLINE=0 for a single pass, which is what a
+# scheduled run wants because nothing is propagating then. See ADR-0004
+# Decision 4 item 6 and docs/DEPLOY.md.
+DEADLINE ?=
+
 web-verify-live: ## Fetch ORIGIN and compare every byte against the manifest
-	@test -n "$(ORIGIN)" || { echo 'Usage: make web-verify-live ORIGIN=https://example'; exit 2; }
-	./scripts/verify-live.py "$(ORIGIN)" --manifest web/dist/manifest.json
+	@test -n "$(ORIGIN)" || { echo 'Usage: make web-verify-live ORIGIN=https://example [DEADLINE=120]'; exit 2; }
+	./scripts/verify-live.py "$(ORIGIN)" --manifest web/dist/manifest.json \
+		$(if $(DEADLINE),--deadline "$(DEADLINE)")
 
 web-clean: ## Remove the web build output
 	rm -rf web/dist web/.astro
