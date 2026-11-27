@@ -99,8 +99,15 @@ export const fr = {
     title: 'Aperçu',
     empty:
       'L’aperçu s’affichera ici dès qu’un document sera chargé. Il se met à jour pendant que vous réglez le filigrane.',
+    /**
+     * The in-between state: a document is loaded and there is nothing to draw
+     * on it yet. Its sibling above tells you what to do first; so does this.
+     */
+    awaitingMark:
+      'Votre document est chargé. Écrivez le texte du filigrane, ou choisissez un modèle, pour en voir l’aperçu.',
     canvasLabel: (name: string) => `Aperçu filigrané de ${name}`,
     statusIdle: 'En attente d’un document',
+    statusAwaitingMark: 'En attente du texte',
     statusRendering: 'Calcul de l’aperçu',
     statusReady: 'Aperçu à jour',
     statusAnnounce: 'Aperçu à jour.',
@@ -143,7 +150,7 @@ export const fr = {
      * the font cannot draw has its own status and is not this.
      */
     refused:
-      'Le moteur a refusé un réglage envoyé par l’interface. C’est un défaut de notre côté, pas un problème avec votre document. Rechargez la page et réessayez.',
+      'Le moteur a refusé un réglage envoyé par l’interface. C’est un défaut de notre côté, pas un problème avec votre document. Si cela se reproduit, vous pouvez le signaler sur le dépôt du code.',
 
     /**
      * Status 6, TextDoesNotFit. ADR-0007 Decision 2 wraps, then shrinks to the

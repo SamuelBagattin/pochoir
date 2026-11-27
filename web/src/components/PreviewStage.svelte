@@ -8,10 +8,13 @@
     statusLabel: string;
     /** Announced politely once a render settles. Empty while one is running. */
     announcement: string;
+    /** Shown in place of the canvas: which "nothing to show" this is. */
+    emptyMessage: string;
     fileName: string | null;
   }
 
-  let { bitmap, busy, statusLabel, announcement, fileName }: Props = $props();
+  let { bitmap, busy, statusLabel, announcement, emptyMessage, fileName }: Props =
+    $props();
 
   let canvas: HTMLCanvasElement | null = $state(null);
 
@@ -47,7 +50,7 @@
         aria-label={t.preview.canvasLabel(fileName ?? '')}
       ></canvas>
     {:else}
-      <p class="stage__empty">{t.preview.empty}</p>
+      <p class="stage__empty">{emptyMessage}</p>
     {/if}
   </div>
 
