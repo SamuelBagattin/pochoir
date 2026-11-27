@@ -308,9 +308,77 @@ decide it. Every emulated 404 therefore carries an `X-Pochoir-Emulated` header
 saying so, and the live check settles it on the first deploy rather than
 leaving it as a line in a document.
 
+## Decision 7 — the live check retries the whole manifest, and says what it cannot prove
+
+Added 2026-11-27, the same day as the first deploy, because the check this ADR
+wired up failed a deploy that had succeeded.
+
+Run 45985959359 uploaded a correct bundle. The verify step then reported
+`_pochoir/index.astro_…_lang.*.js` and `_pochoir/worker-*.js` as `404` and
+`index.html` as a mismatch, and failed the job. The origin was entirely correct
+on a hand check a minute later. The check had raced Cloudflare's deployment
+propagation.
+
+**It is documented behaviour and it accounts for every line of that run**
+(<https://developers.cloudflare.com/workers/versions-and-deployments/version-skew/>).
+A Worker version owns an asset manifest mapping paths to files; deployment
+changes "take up to a few seconds to reach every location", and until they
+have, "locations can use different deployment configurations"; "uploading a
+file does not add it to other versions' manifests", so a request that lands on
+a location still serving the previous version asks for a path that version
+never had, and "a missing file can return a `404` response". The `index.html`
+mismatch is the same skew the other way: that location served the old HTML.
+
+**One line of that run was ours, not the platform's,** and it is the kind of
+thing only a failure surfaces. The engine `.wasm` appeared twice in the output
+— `200 … ok (376166 bytes)` in the file table and `HTTP 404` in the findings —
+because `verify-live.py` fetched it once from the `files` loop and again from
+the `engine` block, 1.6 seconds apart, and the two requests reached locations
+with different deployment configurations. A check that makes two requests for
+one path cannot produce a coherent snapshot even in principle. The engine block
+now reuses the observation the file pass already made, so one pass makes one
+request per path. Decision 4's manifest shape is unchanged; only the reader is.
+
+What the check does now, and why in this shape rather than a simpler one:
+
+- **Retry, with the whole manifest as the unit.** 2s, 4s, 8s, then 15s, until a
+  pass is wholly coherent or 120 seconds have passed. Restarting beats
+  re-fetching only the failures, because the claim worth making is that every
+  path matched at the same moment — and a pass assembled from several moments
+  would read as though it asserted that while asserting something weaker.
+- **Three severities, because a red build should teach the reader something.**
+  An absent path is `PENDING` and retried. A stale body at a path with no
+  content hash is `STALE`, retried, and a failure if it survives the deadline.
+  A mismatch at a content-addressed path is `MISMATCH` and fails on the first
+  pass — content-hashed names exist so that different contents have different
+  paths, so skew makes such a path absent, never different, and bytes that
+  differ there are bytes we never built. A one-byte flip in a chunk is refused
+  in under a second rather than after two minutes of patient retrying.
+- **`DEADLINE=0` for the scheduled run.** Nothing is propagating a week after a
+  deploy, so there is nothing to wait for, and retrying would hand a real
+  substitution two minutes of grace.
+
+**And the summary line is narrower than it was.** A green run now says that
+every path was served matching *to this client, from whichever location it
+reached, within N seconds* — not that the deploy is verified. Cloudflare's own
+page bounds every check of this shape: "Waiting a fixed time or testing one
+location does not prove that every location has the change." ADR-0004's ceiling
+already refuses to overstate what attestation buys; a post-deploy step whose
+last line said "verified" would have undone that in one sentence, at the only
+place in the pipeline anyone actually reads.
+
+The step still fails the job. The flakiness was fixed at its cause rather than
+by turning the gate into a warning, because this is the one step that sees what
+a visitor receives and ADR-0004 item 6 exists because it is the step most
+likely to be skipped.
+
 ## Consequences
 
 - A broken web build now fails CI. That was the hole.
+- The post-deploy check tolerates propagation without tolerating a wrong byte,
+  and a red verify is worth reading again: `MISMATCH` is an alarm, `PENDING`
+  past the deadline is only an unproven deploy. The cost is up to two minutes
+  on a deploy whose edge is slow to converge.
 - `make web-serve` makes the production policy readable on a laptop, which is
   the difference between a CSP that is believed and one that is checked.
 - `make web-deploy` is one command and cannot publish an unattested bundle, but
@@ -357,3 +425,12 @@ ADR-0004 records for the wasm side.
   <https://developers.cloudflare.com/workers/static-assets/headers/>
 - Cloudflare Workers limits (100 rules, 2 000 characters per line):
   <https://developers.cloudflare.com/workers/platform/limits/>
+- Cloudflare version skew and static assets — per-version asset manifests,
+  propagation taking "up to a few seconds to reach every location", and the
+  sentence that bounds Decision 7's claim, that waiting a fixed time or testing
+  one location proves nothing about every location:
+  <https://developers.cloudflare.com/workers/versions-and-deployments/version-skew/>
+- Reported cases of a Workers deploy serving a stale asset manifest for far
+  longer than propagation should take — unverified user reports, and the reason
+  Decision 7's deadline is not sized for them:
+  <https://github.com/cloudflare/workers-sdk/issues/16658>

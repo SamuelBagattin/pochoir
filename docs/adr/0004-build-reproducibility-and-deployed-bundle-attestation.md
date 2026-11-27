@@ -749,6 +749,62 @@ Makefile target that CI calls, per the project's standing rule.
    network after a green build. It should also run on a schedule, not only at
    release: a bundle swapped a week after deploy is exactly the attack that a
    release-time check cannot see.
+
+   **Amended 2026-11-27, after the check failed a deploy that had succeeded.**
+   Run 45985959359 uploaded a correct bundle; the check then reported two
+   content-addressed chunks 404 and `index.html` mismatched, and failed the
+   job. The origin was correct a minute later. It had raced Cloudflare's
+   deployment propagation — documented behaviour, not a platform fault: a
+   version owns an asset manifest, "deployment changes take up to a few
+   seconds to reach every location", and until they have, "locations can use
+   different deployment configurations", so a request landing on the previous
+   version asks for a path that version never had
+   (<https://developers.cloudflare.com/workers/versions-and-deployments/version-skew/>).
+
+   This matters out of proportion to the inconvenience. A gate that cries wolf
+   is a gate people switch off, and this is the only step in the scheme that
+   sees what a visitor receives. A flaky version of it is worse than none,
+   because it trains everyone to read a red verify as noise. So three things
+   are fixed here rather than left to the implementation:
+
+   - **The unit of comparison is the whole manifest, and a retry restarts it.**
+     A partial match is not success. The property worth asserting is that every
+     path matched *at the same moment*; patching up individual paths across
+     passes would assert something weaker while reading as though it asserted
+     this.
+   - **"Not there yet" and "wrong" must be reported differently, and only one
+     of them may wait.** A non-200 on a manifest path, or a stale body at a
+     path whose name carries no content hash, is consistent with propagation
+     and is retried until a deadline. A mismatch at a **content-addressed**
+     path is not, at any point: content-hashed names exist so that different
+     contents have different paths, so skew makes such a path absent, never
+     different. Different bytes there are bytes we never built, and the check
+     fails on the first pass. Past the deadline, a still-stale body is a
+     failure (the deploy did not take) while a still-absent path is
+     *inconclusive* — the check neither confirmed the bundle nor caught
+     anything.
+   - **The deadline is a stated number with a stated provenance, not a tuned
+     one.** 120 seconds: twenty to forty times Cloudflare's documented "a few
+     seconds", above the whole interval the one observed race leaves open
+     (1.7s to about a minute), and short enough that a broken deploy is red
+     within two minutes of the upload. Deliberately not sized for the reported
+     cases of a deploy serving a stale asset manifest for far longer; in that
+     state red is the correct answer.
+
+   **And the claim a green run licenses is narrower than "the deploy is
+   verified".** It is: *every path in the manifest was served, with matching
+   bytes, to this client, from whichever Cloudflare location it reached, within
+   N seconds of the upload.* The same Cloudflare page is explicit about the
+   limit, and it is a limit on any check of this shape rather than on ours:
+   "Waiting a fixed time or testing one location does not prove that every
+   location has the change." Retrying buys freedom from a race; it buys no
+   knowledge of the other three hundred cities. The script says so in its own
+   output, because a verification step whose summary overstates itself is how
+   an honest scheme acquires a dishonest reputation.
+
+   The step keeps failing the job. The false red was fixed at its cause, not by
+   downgrading the alarm: a warning-only live check is a log line, and item 6
+   exists precisely because this step is the one most likely to be ignored.
 7. **Read the platform's own deployment record while doing so.** Cloudflare's
    versions API returns, per version, `metadata.created_on`, `author_email` and a
    `metadata.source` whose enum distinguishes `wrangler`, `dash`, `api` and
@@ -987,6 +1043,17 @@ minified-but-unmapped output, which ADR-0001 had already ruled out.
       us. The product has to say it in a sentence a non-specialist reads
       correctly, without overclaiming and without burying it. That is a wording
       decision and a product decision.
+- [ ] **Should the manifest record which paths are content-addressed?** Item 6's
+      fast-fail rule turns on that distinction, and `verify-live.py` currently
+      *infers* it from the filename — a hash-shaped token on an extension we
+      emit hashed. The inference is checked against the real manifest and gets
+      all eleven paths right today, and it fails safe (a path it does not
+      recognise is treated as stable, so it is retried rather than failed), but
+      it is a heuristic sitting under a security check, which is the wrong place
+      for one. The build knows the answer for certain. Moving it into
+      `manifest.json` is a `manifest_version` bump and a change to
+      `web-attest.py`, which is why it was not done in the same change as the
+      retry loop.
 - [ ] **Still open from ADR-0001, and not closed here — does Cloudflare honour
       `Cross-Origin-Embedder-Policy` in `_headers`?** No Cloudflare documentation
       says either way. It does not block us, because ADR-0003 removed the need for

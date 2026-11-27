@@ -36,10 +36,93 @@ input.
 | Resolve the headers | `web-deploy-check` | prints what `_headers` yields for the root, an asset and the engine |
 | Dry run | `web-deploy-check` | `wrangler deploy --dry-run`; validates `wrangler.jsonc` and needs no credential |
 | Upload | `web-deploy` | `wrangler deploy` — the only step that needs a token |
-| Verify what is served | `web-verify-live` | fetches every path from the origin and compares it with the manifest |
+| Verify what is served | `web-verify-live` | fetches every path from the origin and compares it with the manifest, retrying the whole comparison while the origin is still propagating |
 
 Everything except the last two runs today, offline, on a laptop. Run
 `make web-deploy-check` to see it.
+
+## Deployment propagation, and what the live check can prove
+
+**The post-deploy check races the platform, and on 2026-11-27 it lost.** Run
+45985959359 uploaded a correct bundle, and the verify step then reported two
+content-addressed chunks as `404` and `index.html` as a mismatch, and failed the
+job. A hand check about a minute later found the origin entirely correct: both
+files 200, the served HTML referencing the new hashes. Nothing was wrong with
+the deploy.
+
+Cloudflare documents the mechanism, and it accounts for every symptom
+([version skew and static assets](https://developers.cloudflare.com/workers/versions-and-deployments/version-skew/)):
+a Worker version owns an **asset manifest** mapping paths to files; "deployment
+changes take up to a few seconds to reach every location on Cloudflare's
+network", and until they have, "locations can use different deployment
+configurations". A request that lands on a location still serving the previous
+version asks for a path that version has never heard of, and a missing file can
+return a 404. The `index.html` mismatch is the same skew the other way round:
+that location served the old HTML. The oddest line of that run — the engine
+`.wasm` fetched twice, 1.6 seconds apart, coming back 200-and-correct then 404
+— is two requests reaching two locations with two configurations.
+
+So `verify-live.py` now **retries the whole manifest** until one pass is
+coherent or a deadline passes. A partial match is not success: the claim worth
+making is that every path matched *at the same moment*, so each retry restarts
+the comparison instead of patching up the paths that failed last time. Backoff
+is 2s, 4s, 8s, then 15s, clamped so the last pass does not overrun.
+
+It separates "not there yet" from "wrong", which is the part a human reading a
+red build benefits from:
+
+| Printed | What it is | Behaviour |
+| --- | --- | --- |
+| `PENDING` | a non-200 on a manifest path, a missing header, an odd 404 probe | retried; at the deadline the run is **INCONCLUSIVE** (exit 3) |
+| `STALE` | a 200 whose bytes differ at a path with no content hash (`index.html`) | retried; at the deadline it is a **failure** (exit 1) — two minutes on, this is a deploy that did not take, not a race |
+| `MISMATCH` | a 200 whose bytes differ at a **content-addressed** path | **fails on the first pass**, without waiting |
+
+That last row is the one that keeps the gate sharp. Cloudflare's own advice is
+content-hashed filenames precisely so that "different file contents then have
+different paths" — version skew makes such a path *absent*, never *different*.
+Different bytes there are bytes we never built, and no amount of waiting makes
+them legitimate. A one-byte flip in a chunk fails in under a second.
+
+**The deadline is 120 seconds** (`DEADLINE=` on the target, `--deadline` on the
+script). Where that number comes from, since one chosen to make a single run
+pass would be worthless:
+
+- Cloudflare documents propagation as "up to a few seconds". 120s is twenty to
+  forty times that, so exhausting it means we are not in the documented
+  behaviour any more — which is what this check exists to notice.
+- It covers the whole interval the observed race leaves open, with margin: the
+  check failed 1.7s in and a hand check about a minute later was clean, so that
+  day's convergence lay somewhere in (1.7s, ~60s]. One observation, stated as
+  one.
+- It is short enough that a genuinely broken deploy is red within two minutes
+  of the upload. A gate nobody waits for is a gate nobody runs.
+- It is deliberately **not** sized for the reported cases of a Workers deploy
+  serving a stale asset manifest for far longer
+  ([workers-sdk#16658](https://github.com/cloudflare/workers-sdk/issues/16658)).
+  Those are unverified user reports; if we are in that state, red is correct and
+  waiting ten minutes to say so would only hide it.
+
+**What a green run proves, stated narrowly**, because ADR-0004 is careful about
+this kind of overstatement:
+
+> every path in the manifest was served, with matching bytes, to this client,
+> from whichever Cloudflare location this client reached, within N seconds of
+> the upload.
+
+Not "the deploy is verified", and not "every location serves this bundle". The
+same Cloudflare page bounds what any check of this shape can do, in a sentence
+worth keeping: **"Waiting a fixed time or testing one location does not prove
+that every location has the change."** The retry buys freedom from a race we
+were losing; it buys no knowledge about the other three hundred cities, and the
+script's output does not claim any.
+
+**The step still fails the job**, and should. The false red was fixed at its
+cause rather than by turning the alarm down: this is the only step in the whole
+scheme that sees what a visitor receives, and a warning-only version of it is a
+log line nobody reads. A red build here means *we could not confirm what is
+being served*, which is a true and recoverable statement — re-run the step. A
+green build that said "verified" without having checked would not be
+recoverable, because nobody looks twice at green.
 
 ## Looking at the real thing locally
 
@@ -82,7 +165,10 @@ In the order someone would have to do them.
    page until someone chooses a file.
 8. **A scheduled `web-verify-live`.** ADR-0004 Decision 4 item 6 is explicit
    that a release-time check cannot see a bundle swapped a week later. One
-   scheduled workflow, one `make web-verify-live ORIGIN=…`.
+   scheduled workflow, one `make web-verify-live ORIGIN=… DEADLINE=0`. Pass
+   `DEADLINE=0` there: no deploy is in flight, so there is nothing to wait for,
+   and a scheduled check that retried for two minutes would be giving a real
+   substitution two minutes of grace. See *Deployment propagation* below.
 9. **Cloudflare's versions API** in that scheduled job, asserting the live
    version's `metadata.source` is `workersci` rather than `dash` or
    `wrangler` — the tripwire for a deploy from a laptop. Retention is 30 days
