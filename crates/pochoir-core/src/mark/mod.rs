@@ -41,10 +41,15 @@ mod blur;
 mod layout;
 mod nfc;
 mod prng;
+pub mod tone;
 mod trig;
 
 pub use layout::{LINE_HEIGHT, Layout, MAX_LINES, MIN_FONT_SIZE_RATIO, measure};
 pub use nfc::normalise;
+pub use tone::{
+    DARK_COLOUR, LIGHT_COLOUR, MIN_CONTRAST_COVERAGE, MIN_VISIBLE_DELTA, PageTone,
+    relative_luminance,
+};
 
 use crate::font::Font;
 use crate::geom::Point;
@@ -79,12 +84,44 @@ pub const MIN_OPACITY: f32 = 0.05;
 /// Largest opacity the mark may be set to.
 pub const MAX_OPACITY: f32 = 0.80;
 
-/// Neutral dark grey, `#1A1A1A`. ADR-0002 Decision 3, and load-bearing.
+/// How the mark's colour is decided. [`MarkColour::Automatic`] by default.
 ///
-/// The attacker's next move is to print and rescan, or photocopy in black and
-/// white. A dark grey mark survives greyscale reproduction and aggressive JPEG
-/// re-compression; a pale or pastel one can vanish entirely.
-pub const DEFAULT_COLOUR: [u8; 3] = [0x1A, 0x1A, 0x1A];
+/// ADR-0002 Decision 3 fixed the colour at `#1A1A1A` and allowed the user to
+/// override it. That default is right for paper and wrong for a dark-mode
+/// screenshot, where it is black on black and the output is visually identical
+/// to the input.
+/// [ADR-0010](../../../../docs/adr/0010-mark-contrast-against-the-page.md)
+/// supersedes it on this point: by default the colour is chosen from the
+/// page's own measured luminance, between [`DARK_COLOUR`] and [`LIGHT_COLOUR`].
+///
+/// An explicit choice is still honoured exactly, and warned about when it has
+/// poor contrast — never overridden. That is ADR-0002's posture everywhere
+/// else and there is no reason for this parameter to be the exception.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MarkColour {
+    /// Chosen from the page, by [`PageTone::choose_colour`].
+    #[default]
+    Automatic,
+    /// Exactly this sRGB colour, whatever the page looks like.
+    Fixed([u8; 3]),
+}
+
+impl MarkColour {
+    /// `true` when the engine will pick the colour.
+    #[must_use]
+    pub const fn is_automatic(self) -> bool {
+        matches!(self, Self::Automatic)
+    }
+
+    /// The colour this resolves to on a page with this tone and opacity.
+    #[must_use]
+    pub fn resolve(self, tone: &PageTone, opacity: f32) -> [u8; 3] {
+        match self {
+            Self::Automatic => tone.choose_colour(opacity),
+            Self::Fixed(colour) => colour,
+        }
+    }
+}
 
 /// Blur σ as a fraction of the **font size**, not of a pixel count.
 ///
@@ -132,15 +169,6 @@ pub const JITTER_FRACTION: f32 = 0.15;
 /// about legibility, which we have not measured and would not know how to
 /// state honestly.
 pub const FAINT_SHRINK_RATIO: f32 = 0.75;
-
-/// Luminance above which a colour is called too pale to survive a photocopier.
-///
-/// Rec. 709 relative luminance on the sRGB values directly, which is a rough
-/// measure and good enough for a warning. ADR-0002 Decision 3 says we "allow a
-/// colour choice and warn when the chosen colour's luminance is too high"; this
-/// is that threshold, and it warns rather than refusing because the choice is
-/// the user's.
-pub const PALE_LUMINANCE: f32 = 0.55;
 
 /// Most tiles the lattice may hold, as a guard rather than a real limit.
 ///
@@ -213,8 +241,8 @@ pub struct Mark {
     pub angle_degrees: f32,
     /// Opacity of the mark, `0.05..=0.80`.
     pub opacity: f32,
-    /// Mark colour, sRGB.
-    pub colour: [u8; 3],
+    /// How the colour is decided: measured from the page, or fixed.
+    pub colour: MarkColour,
     /// How thickly to tile.
     pub density: TileDensity,
     /// Blur σ as a fraction of the font size.
@@ -228,7 +256,7 @@ impl Default for Mark {
             font_size_ratio: DEFAULT_FONT_SIZE_RATIO,
             angle_degrees: DEFAULT_ANGLE_DEGREES,
             opacity: DEFAULT_OPACITY,
-            colour: DEFAULT_COLOUR,
+            colour: MarkColour::Automatic,
             density: TileDensity::default(),
             blur_ratio: DEFAULT_BLUR_RATIO,
         }
@@ -296,16 +324,15 @@ impl Mark {
         Ok(text)
     }
 
-    /// `true` when the chosen colour is light enough that a photocopy might
-    /// lose it. A warning for the UI, never an error.
+    /// The colour this mark will actually be drawn in on a page with this
+    /// tone.
+    ///
+    /// Pure: the same tone and the same mark always give the same colour,
+    /// which is what keeps the output byte-identical between the CLI and
+    /// WebAssembly.
     #[must_use]
-    pub fn colour_is_too_pale(&self) -> bool {
-        let [r, g, b] = self.colour;
-        // Rec. 709 coefficients, applied to sRGB values without linearising:
-        // crude, and ample for a threshold.
-        let luminance =
-            (0.2126 * f32::from(r) + 0.7152 * f32::from(g) + 0.0722 * f32::from(b)) / 255.0;
-        luminance > PALE_LUMINANCE
+    pub fn resolved_colour(&self, tone: &PageTone) -> [u8; 3] {
+        self.colour.resolve(tone, self.opacity)
     }
 }
 
@@ -353,6 +380,25 @@ pub struct Composition {
     /// [`Layout::font_size_px`] is what it was actually drawn at, which is
     /// smaller whenever the text had to be shrunk to fit.
     pub requested_font_size_px: f32,
+    /// The luminance distribution of the page **before** the mark went on.
+    ///
+    /// Carried out rather than recomputed because the caller cannot measure it
+    /// afterwards: by the time it has the pixmap, the mark is in it.
+    pub tone: PageTone,
+    /// The colour the mark was actually drawn in.
+    ///
+    /// Equal to [`MarkColour::Fixed`]'s value when the user chose one, and to
+    /// [`PageTone::choose_colour`]'s answer when they did not.
+    pub colour: [u8; 3],
+    /// `true` when the engine chose the colour rather than the user.
+    pub colour_was_chosen: bool,
+    /// The fraction of the page over which the mark is visible at all.
+    ///
+    /// [`PageTone::visible_fraction`] for the colour that was drawn. 1.0 on a
+    /// page where every pixel is far enough from the mark's colour; near 0.0
+    /// on the failure this whole measurement exists to catch — a dark mark on
+    /// a dark-mode screenshot, where the output looks like the input.
+    pub visible_fraction: f32,
 }
 
 impl Composition {
@@ -378,6 +424,40 @@ impl Composition {
     #[must_use]
     pub fn was_shrunk_noticeably(&self) -> bool {
         self.shrink_ratio() < FAINT_SHRINK_RATIO
+    }
+
+    /// `true` when the mark is invisible over too much of the page.
+    ///
+    /// A warning for the caller to pass on, never an error — the same posture
+    /// as [`was_shrunk_noticeably`], and for the same reason: refusing to
+    /// draw is worse than drawing and saying so. The threshold is
+    /// [`MIN_CONTRAST_COVERAGE`].
+    ///
+    /// When [`colour_was_chosen`] is true this says the *page* defeats both
+    /// candidates — it is split between light and dark regions, and no single
+    /// colour contrasts with all of it. When it is false it says the user's
+    /// own colour is close to the page's tone, and their remedy is to change
+    /// it or to raise the opacity.
+    ///
+    /// [`was_shrunk_noticeably`]: Composition::was_shrunk_noticeably
+    /// [`colour_was_chosen`]: Composition::colour_was_chosen
+    #[must_use]
+    pub fn has_poor_contrast(&self) -> bool {
+        self.visible_fraction < MIN_CONTRAST_COVERAGE
+    }
+
+    /// The best [`visible_fraction`] any permitted colour could have reached
+    /// on this page, at the opacity that was used.
+    ///
+    /// Lets a caller distinguish "you chose badly" from "this page cannot be
+    /// marked in one colour" without re-deriving the rule.
+    ///
+    /// [`visible_fraction`]: Composition::visible_fraction
+    #[must_use]
+    pub fn best_visible_fraction(&self, opacity: f32) -> f32 {
+        let dark = self.tone.visible_fraction(DARK_COLOUR, opacity);
+        let light = self.tone.visible_fraction(LIGHT_COLOUR, opacity);
+        dark.max(light)
     }
 }
 
@@ -408,6 +488,12 @@ pub fn compose(pixmap: &mut Pixmap, mark: &Mark, seed: u64, jitter: bool) -> Res
     }
     let font = Font::bundled()?;
 
+    // Measured here, on the page as it arrives: one pass before a single
+    // pixel is touched, because afterwards the mark is in the pixels and the
+    // measurement would be of our own work.
+    let tone = PageTone::measure(pixmap);
+    let colour = mark.resolved_colour(&tone);
+
     let page_width = pixmap.width() as f32;
     let page_height = pixmap.height() as f32;
     let requested = mark.font_size_ratio * page_width.min(page_height);
@@ -426,12 +512,16 @@ pub fn compose(pixmap: &mut Pixmap, mark: &Mark, seed: u64, jitter: bool) -> Res
     let sigma_px = mark.blur_ratio * layout.font_size_px;
     let stamp = layout::stamp(&font, &layout, sigma_px)?;
 
-    let tiles = tile(pixmap, &stamp, &layout, mark, seed, jitter)?;
+    let tiles = tile(pixmap, &stamp, &layout, mark, colour, seed, jitter)?;
     Ok(Composition {
         layout,
         tiles,
         sigma_px,
         requested_font_size_px: requested,
+        visible_fraction: tone.visible_fraction(colour, mark.opacity),
+        colour,
+        colour_was_chosen: mark.colour.is_automatic(),
+        tone,
     })
 }
 
@@ -616,6 +706,7 @@ fn tile(
     stamp: &crate::raster::Mask,
     layout: &Layout,
     mark: &Mark,
+    colour: [u8; 3],
     seed: u64,
     jitter: bool,
 ) -> Result<usize> {
@@ -671,7 +762,7 @@ fn tile(
                 let at = line + x as usize * 4;
                 for channel in 0..3 {
                     let destination = f32::from(data[at + channel]);
-                    let source = f32::from(mark.colour[channel]);
+                    let source = f32::from(colour[channel]);
                     let blended = source * alpha + destination * (1.0 - alpha);
                     // `+ 0.5` then `floor`: never `round`.
                     data[at + channel] = (blended + 0.5).floor() as u8;
@@ -702,7 +793,17 @@ pub fn derive_seed(pixmap: &Pixmap, mark: &Mark) -> u64 {
     material.extend_from_slice(&mark.angle_degrees.to_bits().to_be_bytes());
     material.extend_from_slice(&mark.opacity.to_bits().to_be_bytes());
     material.extend_from_slice(&mark.blur_ratio.to_bits().to_be_bytes());
-    material.extend_from_slice(&mark.colour);
+    // Tagged, so that an automatic colour and a fixed one can never produce
+    // the same material. The resolved colour itself is not hashed and does not
+    // need to be: it is a pure function of the pixels and the opacity, both of
+    // which are already in here.
+    match mark.colour {
+        MarkColour::Automatic => material.push(0),
+        MarkColour::Fixed(colour) => {
+            material.push(1);
+            material.extend_from_slice(&colour);
+        }
+    }
     material.push(match mark.density {
         TileDensity::Low => 0,
         TileDensity::Normal => 1,

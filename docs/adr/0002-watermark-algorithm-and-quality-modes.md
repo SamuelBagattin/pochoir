@@ -1,6 +1,10 @@
 # ADR-0002: Watermark algorithm and output quality modes
 
-- **Status:** Accepted
+- **Status:** Accepted, except where superseded — by
+  [ADR-0007](0007-watermark-specification-corrections.md) in five respects of
+  Decision 3, and by
+  [ADR-0010](0010-mark-contrast-against-the-page.md) in the **Colour** row of
+  Decision 3. See the notes under that table.
 - **Date:** 2026-11-26
 - **Deciders:** Samuel Bagattin
 - **Supersedes:** none
@@ -232,8 +236,22 @@ default to it.
 >   to fixed tile positions fails". ADR-0007 Decision 4 displaces every tile
 >   independently, still seeded.
 >
-> Everything else in this decision — the font size, the angle, the opacity, the
-> colour and the reasoning for each — stands.
+> Everything else in this decision — the font size, the angle, the opacity and
+> the reasoning for each — stands. The **colour** row is superseded separately,
+> below.
+
+> **The Colour row is superseded by
+> [ADR-0010](0010-mark-contrast-against-the-page.md) (2026-11-27).** A fixed
+> `#1A1A1A` and a warning that fires only when the chosen colour is too *light*
+> assume the page is white paper. On a dark-mode screenshot — median luminance
+> 0.114, 93.5% of pixels below 0.25 — the default mark is black on black, the
+> output is visually identical to the input, and the one-sided warning says
+> nothing. ADR-0010 measures the page's luminance distribution and chooses
+> between `#1A1A1A` and `#E5E5E5`; an explicit colour is still honoured, and
+> warned about when it has poor contrast against the page that is actually
+> there. The reasoning in this row — that a neutral grey survives a photocopy
+> and a pastel one does not — is why both candidates are neutral greys, and is
+> not what changed.
 
 ### Text encoding: normalise to NFC
 

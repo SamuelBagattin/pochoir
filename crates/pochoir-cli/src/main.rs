@@ -14,7 +14,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use pochoir_core::mark::{
-    MAX_BLUR_RATIO, MAX_FONT_SIZE_RATIO, MAX_OPACITY, MIN_FONT_SIZE_RATIO, MIN_OPACITY,
+    DARK_COLOUR, LIGHT_COLOUR, MAX_BLUR_RATIO, MAX_FONT_SIZE_RATIO, MAX_OPACITY,
+    MIN_FONT_SIZE_RATIO, MIN_OPACITY, MarkColour,
 };
 use pochoir_core::{
     DEFAULT_DPI, DEFAULT_QUALITY, Mark, OutputOptions, PageSizing, TileDensity,
@@ -72,10 +73,17 @@ Watermark:
       --mark-opacity O 0.05 to 0.80 (default 0.30). The mark must not stop the
                        recipient reading the document. Coverage comes from
                        tiling, not from one heavy mark.
-      --mark-colour H  Six hex digits, e.g. 1a1a1a (the default). A dark grey
-                       survives a black-and-white photocopy and heavy JPEG
-                       re-compression; a pale one can vanish. A colour too
-                       light to survive is warned about, not refused.
+      --mark-colour C  auto (the default), or six hex digits such as 1a1a1a.
+
+                       auto measures the page and picks the dark mark 1a1a1a
+                       or the light one e5e5e5, whichever is visible over more
+                       of it. The dark one is right for paper and invisible on
+                       a dark-mode screenshot, which is the failure this
+                       replaces: black on black, with nothing said.
+
+                       An explicit colour is drawn exactly as given. If it is
+                       close to the page's own tone it is warned about, never
+                       overridden.
       --mark-density D low, normal (default) or high.
       --mark-blur P    Blur as a percent of the font size, 0 to 6
                        (default 1.5). Softens the glyph edges so the mark reads
@@ -156,17 +164,37 @@ fn run(invocation: &Invocation) -> Result<String, String> {
     // the whole of the user's protection against a mark quietly coming out
     // much smaller than they chose.
     let mut shrunk: Option<(f32, f32, f32)> = None;
+    let mut drawn: Option<DrawnMark> = None;
+    let opacity = invocation
+        .options
+        .mark
+        .as_ref()
+        .map_or(0.0, |mark| mark.opacity);
     let pdf =
         pochoir_core::image_to_pdf_observed(&bytes, &invocation.options, |_, _, composition| {
-            if let Some(composition) = composition
-                && composition.was_shrunk_noticeably()
-                && shrunk.is_none()
-            {
+            let Some(composition) = composition else {
+                return;
+            };
+            if composition.was_shrunk_noticeably() && shrunk.is_none() {
                 shrunk = Some((
                     composition.shrink_ratio(),
                     composition.requested_font_size_px,
                     composition.layout.font_size_px,
                 ));
+            }
+            // The page's own tone is the other thing the compositor knows and
+            // the pixels do not show. ADR-0010: the colour is measured against
+            // the page, and a mark nobody can see is the worst failure this
+            // product has, because the user believes their document is marked.
+            if drawn.is_none() {
+                drawn = Some(DrawnMark {
+                    colour: composition.colour,
+                    chosen: composition.colour_was_chosen,
+                    visible: composition.visible_fraction,
+                    best: composition.best_visible_fraction(opacity),
+                    median: composition.tone.median(),
+                    poor: composition.has_poor_contrast(),
+                });
             }
         })
         .map_err(|error| format!("{}: {error}", show(&invocation.input)))?;
@@ -179,18 +207,81 @@ fn run(invocation: &Invocation) -> Result<String, String> {
             ratio * 100.0
         );
     }
+    if let Some(drawn) = &drawn
+        && drawn.poor
+    {
+        eprintln!("pochoir: warning: {}", drawn.warning());
+    }
     std::fs::write(&invocation.output, &pdf)
         .map_err(|error| format!("cannot write {}: {error}", show(&invocation.output)))?;
     Ok(format!(
         "wrote {} ({} bytes{})",
         show(&invocation.output),
         pdf.len(),
-        if invocation.options.mark.is_some() {
-            ", watermarked"
-        } else {
-            ", no watermark"
+        match &drawn {
+            Some(drawn) => format!(
+                ", watermarked in #{} ({}, visible over {:.0}% of the page)",
+                hex_of(drawn.colour),
+                if drawn.chosen { "measured" } else { "as asked" },
+                drawn.visible * 100.0
+            ),
+            None => ", no watermark".to_owned(),
         }
     ))
+}
+
+/// What the compositor did with the colour, for the summary and the warning.
+struct DrawnMark {
+    colour: [u8; 3],
+    chosen: bool,
+    visible: f32,
+    best: f32,
+    median: f32,
+    poor: bool,
+}
+
+impl DrawnMark {
+    /// Why this mark is hard to see, and what the user can do about it.
+    ///
+    /// Two different situations with two different remedies: a colour the user
+    /// chose that is close to the page's tone, which they can change, and a
+    /// page split between light and dark regions, which no single colour
+    /// covers and where the remedy is the opacity or an accepted compromise.
+    fn warning(&self) -> String {
+        let invisible = (1.0 - self.visible) * 100.0;
+        if self.chosen {
+            format!(
+                "this document is split between light and dark areas, so no \
+                 single mark colour covers it: #{} was the better of the two \
+                 and is still invisible over {invisible:.0}% of the page \
+                 (median luminance {:.2}). Raise --mark-opacity, or accept \
+                 that part of the page carries no visible mark.",
+                hex_of(self.colour),
+                self.median
+            )
+        } else {
+            let alternative = if self.colour == DARK_COLOUR {
+                LIGHT_COLOUR
+            } else {
+                DARK_COLOUR
+            };
+            format!(
+                "#{} is close to this document's own tone, so the mark is \
+                 invisible over {invisible:.0}% of the page (median luminance \
+                 {:.2}). Try --mark-colour auto, which would reach {:.0}%, or \
+                 --mark-colour {}, or raise --mark-opacity.",
+                hex_of(self.colour),
+                self.median,
+                self.best * 100.0,
+                hex_of(alternative)
+            )
+        }
+    }
+}
+
+/// Six lowercase hex digits, the way `--mark-colour` takes them.
+fn hex_of(colour: [u8; 3]) -> String {
+    format!("{:02x}{:02x}{:02x}", colour[0], colour[1], colour[2])
 }
 
 /// A path as the user would recognise it, with no attempt to canonicalise.
@@ -317,11 +408,16 @@ fn parse(arguments: &[String]) -> Result<Invocation, Abort> {
             }
             "--mark-colour" => {
                 let value = take_value(flag, inline, arguments, &mut index)?;
-                mark.colour = hex_colour(value).ok_or_else(|| {
-                    Abort::Usage(format!(
-                        "`--mark-colour` wants six hexadecimal digits such as `1a1a1a`, not `{value}`"
-                    ))
-                })?;
+                mark.colour = if value.eq_ignore_ascii_case("auto") {
+                    MarkColour::Automatic
+                } else {
+                    MarkColour::Fixed(hex_colour(value).ok_or_else(|| {
+                        Abort::Usage(format!(
+                            "`--mark-colour` wants `auto` or six hexadecimal digits such as \
+                             `1a1a1a`, not `{value}`"
+                        ))
+                    })?)
+                };
             }
             "--mark-density" => {
                 let value = take_value(flag, inline, arguments, &mut index)?;
@@ -398,12 +494,6 @@ fn parse(arguments: &[String]) -> Result<Invocation, Abort> {
                 },
                 named.join(", ")
             )));
-        }
-        if mark.colour_is_too_pale() {
-            eprintln!(
-                "pochoir: warning: this mark colour is light enough that a \
-                 black-and-white photocopy may lose it"
-            );
         }
     }
 
@@ -656,7 +746,7 @@ mod tests {
 #[cfg(test)]
 mod mark_tests {
     use super::tests::usage_message;
-    use super::{USAGE, hex_colour, parse};
+    use super::{MarkColour, USAGE, hex_colour, parse};
     use pochoir_core::TileDensity;
     use pochoir_core::mark::{
         DEFAULT_ANGLE_DEGREES, DEFAULT_BLUR_RATIO, DEFAULT_FONT_SIZE_RATIO, DEFAULT_OPACITY,
@@ -716,7 +806,7 @@ mod mark_tests {
         );
         assert_eq!(mark.angle_degrees, -45.0);
         assert_eq!(mark.opacity, 0.5);
-        assert_eq!(mark.colour, [0x20, 0x40, 0x80]);
+        assert_eq!(mark.colour, MarkColour::Fixed([0x20, 0x40, 0x80]));
         assert_eq!(mark.density, TileDensity::High);
         assert!((mark.blur_ratio - 0.03).abs() < 1e-6);
         assert_eq!(options.seed, Some(4242));
