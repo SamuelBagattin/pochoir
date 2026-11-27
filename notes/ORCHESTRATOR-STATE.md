@@ -781,12 +781,29 @@ GitHub environment. I checked: the repo has no secrets, no variables and no envi
 No domain — `pochoir.app` stays unregistered on his instruction, so the first deploy lands on
 `pochoir.<subdomain>.workers.dev`.
 
-**AuthProxy: Samuel chose pre-launch gating**, not permanent sign-in. The reasoning matters and
-should survive into whoever picks this up: permanent sign-in would add an account requirement the
+**AuthProxy: dropped. Samuel decided 2026-11-27 to deploy publicly with no gate.** Recorded with
+the reasoning, because the question will come back.
+
+He first asked for AuthProxy to "protect the website", and chose pre-launch gating over permanent
+sign-in when I put the conflict to him: permanent sign-in would add an account requirement the
 government tool does not have, create an access log of who watermarks identity documents, and put
-a third party inside the path ADR-0004's attestation is meant to cover. **The gate comes off
-before public launch** — it is a temporary measure on an unfinished site, and leaving it up would
-quietly falsify the privacy page. His orgs: `sb-tech-consulting` (pro), `coucou`, `test`.
+a third party inside the path ADR-0004's attestation is meant to cover. He then asked me to read
+the AuthProxy docs, anticipating that the backend might need temporary auth. **He was right, and
+the docs are blunt about it:** "Anyone who learns that URL can call it directly and skip sign-in,
+unless your backend rejects requests that didn't come through AuthProxy." There is no
+network-level option; the backend must stay publicly reachable.
+
+Enforcing their `shared_secret` means the origin reads `X-AuthProxy-Secret`, compares it in
+constant time and returns 403 before running anything else — which for us means **a real Worker
+in front of the static assets**, cutting against ADR-0001's "no Worker code" premise, and code to
+remove again at launch. And while any proxy fronts the site it terminates TLS and could alter
+bytes, so `verify-live` would be checking the proxy's output rather than Cloudflare's.
+
+I recommended Cloudflare Access instead for a temporary gate — same platform, no origin code, no
+second TLS terminator, one toggle off. He chose neither: **deploy publicly.** That is the
+coherent answer. A tool whose entire pitch is "no account, nothing leaves your device" has
+nothing to hide behind a login, and an unfinished public site is a smaller cost than a gate we
+would have to unpick. No AuthProxy site was created; his orgs are untouched.
 
 **Rotation:** `deploy-plumbing` is at 358k and `web-ui` at 518k. Both are past the mark. The next
 task in either lane goes to a fresh session from a handover note.
