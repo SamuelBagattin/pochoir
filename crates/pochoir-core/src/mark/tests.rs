@@ -5,10 +5,11 @@
 //! tests assert are the real ones rather than a scaled stand-in.
 
 use super::{
-    DEFAULT_ANGLE_DEGREES, DEFAULT_BLUR_RATIO, DEFAULT_COLOUR, DEFAULT_FONT_SIZE_RATIO,
-    DEFAULT_OPACITY, FAINT_SHRINK_RATIO, Frame, JITTER_FRACTION, Lattice, MAX_BLUR_RATIO,
-    MAX_FONT_SIZE_RATIO, MAX_MARK_CHARACTERS, MAX_OPACITY, MIN_FONT_SIZE_RATIO, MIN_OPACITY, Mark,
-    TileDensity, compose, derive_seed, layout, nfc, normalise, placements, unsupported_characters,
+    DARK_COLOUR, DEFAULT_ANGLE_DEGREES, DEFAULT_BLUR_RATIO, DEFAULT_FONT_SIZE_RATIO,
+    DEFAULT_OPACITY, FAINT_SHRINK_RATIO, Frame, JITTER_FRACTION, LIGHT_COLOUR, Lattice,
+    MAX_BLUR_RATIO, MAX_FONT_SIZE_RATIO, MAX_MARK_CHARACTERS, MAX_OPACITY, MIN_FONT_SIZE_RATIO,
+    MIN_OPACITY, Mark, MarkColour, TileDensity, compose, derive_seed, layout, nfc, normalise,
+    placements, unsupported_characters,
 };
 use crate::Error;
 use crate::font::Font;
@@ -26,6 +27,15 @@ const REALISTIC: &str = "Document destiné exclusivement à une demande de locat
 fn page() -> Pixmap {
     let mut pixmap = Pixmap::new(WIDTH, HEIGHT).expect("A4 at 200 dpi");
     pixmap.data_mut().fill(0xFF);
+    pixmap
+}
+
+/// An A4 page of one flat colour, for the contrast tests.
+fn filled(rgba: [u8; 4]) -> Pixmap {
+    let mut pixmap = Pixmap::new(WIDTH, HEIGHT).expect("A4 at 200 dpi");
+    for pixel in pixmap.data_mut().chunks_exact_mut(4) {
+        pixel.copy_from_slice(&rgba);
+    }
     pixmap
 }
 
@@ -51,13 +61,17 @@ fn the_defaults_are_adr_0002_decision_3() {
     assert_eq!(mark.font_size_ratio, 0.035, "3.5% of the shorter edge");
     assert_eq!(mark.angle_degrees, -30.0);
     assert_eq!(mark.opacity, 0.30);
-    assert_eq!(mark.colour, [0x1A, 0x1A, 0x1A], "neutral dark grey #1A1A1A");
+    assert_eq!(
+        mark.colour,
+        MarkColour::Automatic,
+        "ADR-0010: the colour is measured from the page unless the user fixes it"
+    );
     assert_eq!(mark.density, TileDensity::Normal);
     assert_eq!(mark.blur_ratio, DEFAULT_BLUR_RATIO);
     assert_eq!(DEFAULT_FONT_SIZE_RATIO, 0.035);
     assert_eq!(DEFAULT_ANGLE_DEGREES, -30.0);
     assert_eq!(DEFAULT_OPACITY, 0.30);
-    assert_eq!(DEFAULT_COLOUR, [0x1A, 0x1A, 0x1A]);
+    assert_eq!(DARK_COLOUR, [0x1A, 0x1A, 0x1A]);
     mark.validate().expect("the defaults must be valid");
     // An empty mark is not a mark: ADR-0002's closed open question decides that
     // nothing is pre-filled, so the default text is empty and invalid.
@@ -227,17 +241,25 @@ fn a_dark_page_is_lightened_towards_the_mark_colour_not_flattened_to_white() {
         pixel[3] = 0xFF;
     }
     let before = pixmap.clone();
-    compose(&mut pixmap, &Mark::new("destiné à une banque"), 4, true).expect("composes");
+    let composition =
+        compose(&mut pixmap, &Mark::new("destiné à une banque"), 4, true).expect("composes");
     assert_ne!(pixmap, before, "nothing was drawn on the dark page");
+    // ADR-0010: on a page this dark the engine now reaches for the light mark,
+    // which is the point. What this test is about is unchanged — the mark must
+    // blend with the 0x10 underneath rather than be flattened onto white.
+    assert_eq!(composition.colour, LIGHT_COLOUR);
     let brightest = pixmap
         .data()
         .chunks_exact(4)
         .map(|p| p[0])
         .max()
         .expect("pixels");
+    // 0.30 of 0xE5 over 0x10 is 80. Flattening onto white would give 255, and
+    // ignoring the page underneath would give 0xE5.
     assert!(
-        brightest < 0x30,
-        "the mark brightened a dark page to {brightest}; it should stay dark"
+        (0x48..=0x58).contains(&brightest),
+        "the brightest pixel is {brightest}; expected about 80 for 0.30 of \
+         #E5E5E5 over #101010"
     );
 }
 
@@ -764,46 +786,98 @@ fn every_angle_in_range_draws_something() {
 }
 
 #[test]
-fn a_pale_colour_is_flagged_but_not_refused() {
-    // ADR-0002 Decision 3 allows a colour choice and warns when the luminance
-    // is too high, because a pale mark can vanish from a photocopy entirely.
-    // The choice stays the user's, so this is a warning, not an error.
+fn a_colour_close_to_the_page_is_flagged_but_not_refused() {
+    // ADR-0010 replaces ADR-0002's one-sided pale test with contrast against
+    // the page that is actually there. The choice stays the user's, so this is
+    // a warning and not an error — both ways round.
     let pale = Mark {
-        colour: [0xF0, 0xF0, 0xF0],
+        colour: MarkColour::Fixed([0xF0, 0xF0, 0xF0]),
         ..Mark::new(REALISTIC)
     };
-    assert!(pale.colour_is_too_pale());
     pale.validate().expect("a pale colour is legal");
+    let mut white = page();
+    let composition = compose(&mut white, &pale, 1, true).expect("composes");
+    assert!(
+        composition.has_poor_contrast(),
+        "near-white on white: visible over {:.3}",
+        composition.visible_fraction
+    );
+    assert!(!composition.colour_was_chosen);
+    assert!(
+        composition.best_visible_fraction(pale.opacity) > 0.99,
+        "a dark mark would have covered this page"
+    );
 
-    assert!(
-        !Mark::new(REALISTIC).colour_is_too_pale(),
-        "#1A1A1A is dark"
-    );
-    for colour in [[0x00, 0x00, 0x00], [0x80, 0x00, 0x00], [0x1A, 0x1A, 0x1A]] {
-        assert!(
-            !Mark {
-                colour,
-                ..Mark::new(REALISTIC)
-            }
-            .colour_is_too_pale(),
-            "{colour:?} should not be called pale"
-        );
+    // And the failure ADR-0010 exists for: the default dark mark on a page
+    // that is darker than it is. One-sided tests see nothing here.
+    let dark_page_mark = Mark {
+        colour: MarkColour::Fixed(DARK_COLOUR),
+        ..Mark::new(REALISTIC)
+    };
+    let mut dark = filled([0x12, 0x12, 0x12, 0xFF]);
+    let composition = compose(&mut dark, &dark_page_mark, 1, true).expect("composes");
+    assert_eq!(composition.visible_fraction, 0.0);
+    assert!(composition.has_poor_contrast());
+}
+
+#[test]
+fn the_automatic_colour_follows_the_page() {
+    let mark = Mark::new(REALISTIC);
+
+    let mut white = page();
+    let on_white = compose(&mut white, &mark, 1, true).expect("composes");
+    assert_eq!(on_white.colour, DARK_COLOUR);
+    assert!(on_white.colour_was_chosen);
+    assert!(!on_white.has_poor_contrast());
+
+    let mut dark = filled([0x12, 0x12, 0x12, 0xFF]);
+    let on_dark = compose(&mut dark, &mark, 1, true).expect("composes");
+    assert_eq!(on_dark.colour, LIGHT_COLOUR);
+    assert!(on_dark.colour_was_chosen);
+    assert!(!on_dark.has_poor_contrast());
+}
+
+#[test]
+fn an_automatic_mark_is_actually_drawn_on_a_dark_page() {
+    // The whole point, measured in pixels: with ADR-0002's fixed colour this
+    // page comes out byte-identical to the one that went in.
+    let before = filled([0x12, 0x12, 0x12, 0xFF]);
+
+    /// The largest change the mark made to any channel of any pixel.
+    fn deepest(after: &Pixmap, before: &Pixmap) -> u8 {
+        after
+            .data()
+            .chunks_exact(4)
+            .zip(before.data().chunks_exact(4))
+            .flat_map(|(a, b)| (0..3).map(move |c| a[c].abs_diff(b[c])))
+            .max()
+            .expect("pixels")
     }
-    // Green carries most of the luminance, so a mid green is pale and a mid
-    // blue is not.
-    assert!(
-        Mark {
-            colour: [0x00, 0xFF, 0x00],
+
+    let mut fixed_dark = before.clone();
+    compose(
+        &mut fixed_dark,
+        &Mark {
+            colour: MarkColour::Fixed(DARK_COLOUR),
             ..Mark::new(REALISTIC)
-        }
-        .colour_is_too_pale()
+        },
+        1,
+        true,
+    )
+    .expect("composes");
+    assert!(
+        deepest(&fixed_dark, &before) <= 3,
+        "ADR-0002's fixed dark mark changes this page by at most {} of 255, \
+         which is the bug: the user sees their own document back",
+        deepest(&fixed_dark, &before)
     );
+
+    let mut automatic = before.clone();
+    compose(&mut automatic, &Mark::new(REALISTIC), 1, true).expect("composes");
     assert!(
-        !Mark {
-            colour: [0x00, 0x00, 0xFF],
-            ..Mark::new(REALISTIC)
-        }
-        .colour_is_too_pale()
+        deepest(&automatic, &before) >= 60,
+        "the automatic mark only reached {} of 255",
+        deepest(&automatic, &before)
     );
 }
 
@@ -865,7 +939,13 @@ fn the_derived_seed_is_a_function_of_the_document_and_the_parameters() {
             ..mark.clone()
         },
         Mark {
-            colour: [0, 0, 0],
+            colour: MarkColour::Fixed([0, 0, 0]),
+            ..mark.clone()
+        },
+        // The tag alone must reach the seed: an automatic mark and a fixed one
+        // that happens to resolve to the same colour are different requests.
+        Mark {
+            colour: MarkColour::Fixed(DARK_COLOUR),
             ..mark.clone()
         },
         Mark {

@@ -23,7 +23,7 @@ use fixtures::{close, decode_with_zune, exif_block, gradient, jpeg, quadrant_col
 
 use pochoir_core::exif::{EXIF_HEADER, Orientation};
 use pochoir_core::fingerprint::{fingerprint, to_hex};
-use pochoir_core::mark::{Mark, TileDensity};
+use pochoir_core::mark::{Mark, MarkColour, TileDensity};
 use pochoir_core::page::{PageGeometry, PageSource, RasterError};
 use pochoir_core::{OutputOptions, Pixmap, image_to_pdf, render_to_pdf, render_to_pdf_observed};
 
@@ -141,12 +141,19 @@ impl PageSource for Sheets {
 /// A diff here means the rendered mark moved. That is sometimes correct — a
 /// deliberate change to the rasteriser, the font asset or the lattice — and is
 /// otherwise a bug. It is never something to paste over without knowing which.
+/// The three `gradient-*` hashes moved on 2026-11-27 and only those three.
+/// ADR-0010 made the mark's colour a measurement of the page, and the ramp
+/// fixture is a broad distribution whose bulk sits below mid-grey: the light
+/// mark `#E5E5E5` is visible over 85% of it against the dark mark's 72%, so
+/// the default now draws it light. `flat-grey-*` is `#C8C8C8` and still gets
+/// the dark mark; `gradient-black-heavy` fixes its colour explicitly and is
+/// untouched. The jitter did not move — every golden here sets its own seed.
 const GOLDENS: [(&str, &str); 6] = [
     ("flat-grey-default", "d92864d6a813cb44f25445d864c75694"),
     ("flat-grey-no-jitter", "49524701e6d61265deb7741e91471f95"),
-    ("gradient-default", "2da649d741716f0836d60f8fadba6198"),
-    ("gradient-high-density", "6b00f9e1c21eaab3a4884c8d12db8823"),
-    ("gradient-upright", "216c7773572742396ced98be11db3149"),
+    ("gradient-default", "3e62f2e80bfc1ac1c18e23aaea437c51"),
+    ("gradient-high-density", "2db964730fccadc8de49dee7ecb272f8"),
+    ("gradient-upright", "fb73261fea7962ea33dc3ad1795e35ba"),
     ("gradient-black-heavy", "3615d42441e619a9cb96c70ce54c2759"),
 ];
 
@@ -208,7 +215,7 @@ fn golden_cases() -> Vec<(&'static str, Box<dyn PageSource>, OutputOptions)> {
             ramp(),
             OutputOptions {
                 mark: Some(Mark {
-                    colour: [0, 0, 0],
+                    colour: MarkColour::Fixed([0, 0, 0]),
                     opacity: 0.6,
                     blur_ratio: 0.0,
                     ..mark()
